@@ -60,6 +60,47 @@
   color: var(--text-faint);
 }
 
+.audio-sb-codeblock-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.audio-sb-codeblock-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.audio-sb-codeblock-icon {
+  font-size: 1.1em;
+  color: var(--interactive-accent);
+}
+
+.audio-sb-codeblock-label {
+  font-size: 0.9em;
+  color: var(--text-normal);
+  flex: 1;
+}
+
+.audio-sb-codeblock-folder {
+  font-weight: 600;
+}
+
+.audio-sb-codeblock-track {
+  color: var(--text-muted);
+}
+
+.audio-sb-codeblock-error {
+  font-size: 0.8em;
+  color: var(--text-error);
+}
+
 .audio-sb-search {
   width: 100%;
   box-sizing: border-box;

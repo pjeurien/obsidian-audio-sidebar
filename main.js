@@ -103,6 +103,22 @@ class AudioSidebarView extends ItemView {
     }
   }
 
+  playTrack(trackName) {
+    if (!this._trackList) return;
+    const items = this._trackList.querySelectorAll('.audio-sb-item');
+    for (const item of items) {
+      if (item.dataset.name.includes(trackName)) {
+        const audio = item.querySelector('audio');
+        if (audio) {
+          this._trackList.querySelectorAll('audio').forEach(a => a.pause());
+          audio.currentTime = 0;
+          audio.play();
+        }
+        break;
+      }
+    }
+  }
+
   findAudioInFolder(folder) {
     return this.app.vault.getFiles()
       .filter(f =>
@@ -123,6 +139,59 @@ class AudioSidebarPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       this.activateView();
       this.hookFileExplorer();
+    });
+
+    this.registerMarkdownCodeBlockProcessor('audiosidebar', (source, el) => {
+      const [folderPart, trackPart] = source.trim().split('#');
+      const folderName = folderPart.trim();
+      const trackName = trackPart ? trackPart.trim().toLowerCase() : null;
+      const folder = this.app.vault.getAbstractFileByPath(folderName);
+
+      const btn = el.createEl('button', { cls: 'audio-sb-codeblock-btn' });
+      btn.createEl('span', { text: '♪', cls: 'audio-sb-codeblock-icon' });
+      const labelEl = btn.createEl('span', { cls: 'audio-sb-codeblock-label' });
+      labelEl.createEl('span', { text: folderName.split('/').pop(), cls: 'audio-sb-codeblock-folder' });
+      if (trackName) labelEl.createEl('span', { text: ` · ${trackPart.trim()}`, cls: 'audio-sb-codeblock-track' });
+
+      if (!folder) {
+        btn.createEl('span', { text: 'Folder not found', cls: 'audio-sb-codeblock-error' });
+        btn.disabled = true;
+        return;
+      }
+
+      btn.onclick = () => {
+        this.selectedFolder = folder;
+        this.activateView().then(() => {
+          const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+          for (const leaf of leaves) {
+            if (leaf.view instanceof AudioSidebarView) {
+              leaf.view.loadFolder(folder);
+              if (trackName) {
+                setTimeout(() => leaf.view.playTrack(trackName), 50);
+              }
+            }
+          }
+        });
+      };
+    });
+
+    this.addCommand({
+      id: 'load-current-folder',
+      name: 'Load audio from current note\'s folder',
+      callback: () => {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || !activeFile.parent) return;
+        const folder = activeFile.parent;
+        this.selectedFolder = folder;
+        this.activateView().then(() => {
+          const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+          for (const leaf of leaves) {
+            if (leaf.view instanceof AudioSidebarView) {
+              leaf.view.loadFolder(folder);
+            }
+          }
+        });
+      }
     });
   }
 
