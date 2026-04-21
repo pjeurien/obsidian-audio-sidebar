@@ -60,21 +60,35 @@
   color: var(--text-faint);
 }
 
+.block-language-audiosidebar {
+  padding: 0 !important;
+  background: none !important;
+  border: none !important;
+}
+
 .audio-sb-codeblock-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  cursor: pointer;
-  text-align: left;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  width: 100% !important;
+  padding: 14px 16px !important;
+  background: var(--background-secondary) !important;
+  border: none !important;
+  outline: none !important;
+  border-radius: 6px !important;
+  cursor: pointer !important;
+  text-align: left !important;
+  box-shadow: none !important;
+  box-sizing: border-box !important;
 }
 
 .audio-sb-codeblock-btn:hover {
   background: var(--background-modifier-hover);
+}
+
+.audio-sb-codeblock-btn:focus {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .audio-sb-codeblock-icon {

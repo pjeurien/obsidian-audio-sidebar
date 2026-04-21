@@ -1,4 +1,4 @@
-const { Plugin, ItemView } = require('obsidian');
+const { Plugin, ItemView, Menu, TFolder, TFile } = require('obsidian');
 
 const VIEW_TYPE = 'audio-sidebar';
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'webm', 'aac'];
@@ -140,6 +140,35 @@ class AudioSidebarPlugin extends Plugin {
       this.activateView();
       this.hookFileExplorer();
     });
+
+    this.registerEvent(
+      this.app.workspace.on('file-menu', (menu, file) => {
+        if (!(file instanceof TFolder)) return;
+        menu.addItem(item => item
+          .setTitle('Add to note as Audio Sidebar')
+          .setIcon('music')
+          .onClick(() => {
+            const code = `\`\`\`audiosidebar\n${file.path}\n\`\`\``;
+            navigator.clipboard.writeText(code);
+          })
+        );
+      })
+    );
+
+    this.registerEvent(
+      this.app.workspace.on('file-menu', (menu, file) => {
+        if (!(file instanceof TFile)) return;
+        if (!AUDIO_EXTENSIONS.includes(file.extension.toLowerCase())) return;
+        menu.addItem(item => item
+          .setTitle('Copy Audio Sidebar link')
+          .setIcon('music')
+          .onClick(() => {
+            const code = `\`\`\`audiosidebar\n${file.parent.path}#${file.basename}\n\`\`\``;
+            navigator.clipboard.writeText(code);
+          })
+        );
+      })
+    );
 
     this.registerMarkdownCodeBlockProcessor('audiosidebar', (source, el) => {
       const [folderPart, trackPart] = source.trim().split('#');
