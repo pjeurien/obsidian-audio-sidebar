@@ -13,7 +13,7 @@ An Obsidian plugin that provides a persistent audio player in the right sidebar,
 
 ## Supported formats
 
-`mp3` · `wav` · `ogg` · `flac` · `m4a` · `webm` · `aac`
+mp3 · wav · ogg · flac · m4a · webm · aac
 
 ## Usage
 
@@ -25,4 +25,4 @@ The sidebar will not change or clear when you switch notes or tabs. Click the bu
 
 ## Installation
 
-Copy the plugin folder into your vault's `.obsidian/plugins/` directory and enable it in Settings → Community Plugins.
+Copy the plugin folder into your vault's '.obsidian/plugins/' directory and enable it in Settings → Community Plugins.
