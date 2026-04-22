@@ -5,6 +5,7 @@ An Obsidian plugin that provides a persistent audio player in the right sidebar,
 ## Features
 
 - Load all audio files from any vault folder into the sidebar
+- Set a default vault folder in plugin settings and load it automatically
 - Audio keeps playing no matter which note you open or how far you scroll
 - Only one track plays at a time — starting a new track pauses the previous one
 - Loop toggle
@@ -19,6 +20,8 @@ An Obsidian plugin that provides a persistent audio player in the right sidebar,
 ## Usage
 
 ### Sidebar
+
+Optional: set a default folder under **Settings → Community Plugins → Audio Sidebar**. Use a vault-relative path such as `Music/Ambient`.
 
 1. Click a folder in the file explorer (this selects it silently)
 2. Click **Load from selected folder** in the Audio Sidebar

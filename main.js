@@ -1,7 +1,10 @@
-const { Plugin, ItemView, Menu, TFolder, TFile } = require('obsidian');
+const { Notice, Plugin, ItemView, PluginSettingTab, Setting, TFolder, TFile } = require('obsidian');
 
 const VIEW_TYPE = 'audio-sidebar';
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'webm', 'aac'];
+const DEFAULT_SETTINGS = {
+  defaultFolderPath: ''
+};
 
 class AudioSidebarView extends ItemView {
   constructor(leaf, plugin) {
@@ -131,14 +134,103 @@ class AudioSidebarView extends ItemView {
   async onClose() {}
 }
 
+class AudioSidebarSettingTab extends PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    new Setting(containerEl)
+      .setName('Default folder')
+      .setDesc('Vault-relative folder path to load automatically when the sidebar opens.')
+      .addText(text => {
+        text
+          .setPlaceholder('Music/Ambient')
+          .setValue(this.plugin.settings.defaultFolderPath)
+          .onChange(async (value) => {
+            this.plugin.settings.defaultFolderPath = value.trim();
+            await this.plugin.saveSettings();
+          });
+        text.inputEl.style.width = '100%';
+      });
+
+    new Setting(containerEl)
+      .setName('Use selected folder')
+      .setDesc('Copy the folder currently selected in the file explorer into the default folder setting.')
+      .addButton(button => button
+        .setButtonText('Use current selection')
+        .onClick(async () => {
+          const folder = this.plugin.selectedFolder;
+          if (!(folder instanceof TFolder)) {
+            new Notice('Select a folder in the file explorer first.');
+            return;
+          }
+
+          this.plugin.settings.defaultFolderPath = folder.path;
+          await this.plugin.saveSettings();
+          await this.plugin.loadDefaultFolderIntoView();
+          this.display();
+          new Notice(`Default folder set to ${folder.path}`);
+        }));
+  }
+}
+
 class AudioSidebarPlugin extends Plugin {
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
+
+  getFolderByPath(path) {
+    if (!path) return null;
+    const target = this.app.vault.getAbstractFileByPath(path);
+    return target instanceof TFolder ? target : null;
+  }
+
+  getDefaultFolder() {
+    return this.getFolderByPath(this.settings.defaultFolderPath);
+  }
+
+  async loadFolderIntoLeaves(folder) {
+    this.selectedFolder = folder;
+    await this.activateView();
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    for (const leaf of leaves) {
+      if (leaf.view instanceof AudioSidebarView) {
+        leaf.view.loadFolder(folder);
+      }
+    }
+  }
+
+  async loadDefaultFolderIntoView() {
+    const folder = this.getDefaultFolder();
+    if (!folder) {
+      if (this.settings.defaultFolderPath) {
+        new Notice(`Audio Sidebar default folder not found: ${this.settings.defaultFolderPath}`);
+      }
+      return;
+    }
+
+    await this.loadFolderIntoLeaves(folder);
+  }
+
   async onload() {
+    await this.loadSettings();
     this.selectedFolder = null;
     this.registerView(VIEW_TYPE, (leaf) => new AudioSidebarView(leaf, this));
+    this.addSettingTab(new AudioSidebarSettingTab(this.app, this));
     this.addRibbonIcon('music', 'Audio Sidebar', () => this.activateView());
     this.app.workspace.onLayoutReady(() => {
       this.activateView();
       this.hookFileExplorer();
+      this.loadDefaultFolderIntoView();
     });
 
     this.registerEvent(
@@ -211,15 +303,7 @@ class AudioSidebarPlugin extends Plugin {
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile || !activeFile.parent) return;
         const folder = activeFile.parent;
-        this.selectedFolder = folder;
-        this.activateView().then(() => {
-          const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
-          for (const leaf of leaves) {
-            if (leaf.view instanceof AudioSidebarView) {
-              leaf.view.loadFolder(folder);
-            }
-          }
-        });
+        this.loadFolderIntoLeaves(folder);
       }
     });
   }
