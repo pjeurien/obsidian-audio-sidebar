@@ -1,10 +1,76 @@
-const { Notice, Plugin, ItemView, PluginSettingTab, Setting, TFolder, TFile } = require('obsidian');
+const { Modal, Notice, Plugin, ItemView, PluginSettingTab, Setting, TFolder, TFile } = require('obsidian');
 
 const VIEW_TYPE = 'audio-sidebar';
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'webm', 'aac'];
 const DEFAULT_SETTINGS = {
-  defaultFolderPath: ''
+  defaultFolderPath: '',
+  sfxFolderPath: ''
 };
+
+class AudioSfxModal extends Modal {
+  constructor(app, plugin, files) {
+    super(app);
+    this.plugin = plugin;
+    this.files = files;
+    this.filteredFiles = files;
+  }
+
+  onOpen() {
+    this.modalEl.addClass('audio-sb-sfx-modal');
+    const { contentEl } = this;
+    contentEl.empty();
+
+    const searchEl = contentEl.createEl('input', {
+      cls: 'audio-sb-sfx-search',
+      type: 'text',
+      placeholder: 'Search sound effects...'
+    });
+
+    const listEl = contentEl.createEl('div', { cls: 'audio-sb-sfx-list' });
+    this.renderList(listEl);
+
+    searchEl.addEventListener('input', () => {
+      const query = searchEl.value.toLowerCase().trim();
+      this.filteredFiles = this.files.filter(file =>
+        !query ||
+        file.basename.toLowerCase().includes(query) ||
+        file.path.toLowerCase().includes(query)
+      );
+      this.renderList(listEl);
+    });
+
+    searchEl.focus();
+  }
+
+  renderList(listEl) {
+    listEl.empty();
+
+    if (this.filteredFiles.length === 0) {
+      listEl.createEl('div', {
+        text: 'No matching sound effects.',
+        cls: 'audio-sb-sfx-empty'
+      });
+      return;
+    }
+
+    for (const file of this.filteredFiles) {
+      const itemEl = listEl.createEl('button', {
+        cls: 'audio-sb-sfx-item',
+        type: 'button'
+      });
+      itemEl.createEl('span', { text: '♪', cls: 'audio-sb-sfx-icon' });
+      itemEl.createEl('div', { text: file.basename, cls: 'audio-sb-sfx-name' });
+      itemEl.onclick = () => {
+        this.close();
+        this.plugin.playSfx(file);
+      };
+    }
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
 
 class AudioSidebarView extends ItemView {
   constructor(leaf, plugin) {
@@ -31,6 +97,11 @@ class AudioSidebarView extends ItemView {
       const folder = this.plugin.selectedFolder;
       if (folder) this.loadFolder(folder);
     };
+    const sfxRow = toolbar.createEl('div', { cls: 'audio-sb-sfx-row' });
+    const sfxBtn = sfxRow.createEl('button', { text: 'Play sound effect', cls: 'audio-sb-load-btn audio-sb-sfx-btn' });
+    sfxBtn.onclick = () => this.plugin.openSfxPicker();
+    const stopSfxBtn = sfxRow.createEl('button', { text: 'Stop sound effects', cls: 'audio-sb-load-btn audio-sb-sfx-btn' });
+    stopSfxBtn.onclick = () => this.plugin.stopAllSfx();
 
     this._loopBtn = null;
 
@@ -56,7 +127,7 @@ class AudioSidebarView extends ItemView {
   }
 
   renderTracks(content, folder) {
-    const audioFiles = this.findAudioInFolder(folder);
+    const audioFiles = this.plugin.findAudioInFolder(folder);
 
     const header = content.createEl('div', { cls: 'audio-sb-header' });
     header.createEl('span', { text: folder.name || 'Root', cls: 'audio-sb-folder-name' });
@@ -121,16 +192,6 @@ class AudioSidebarView extends ItemView {
       }
     }
   }
-
-  findAudioInFolder(folder) {
-    return this.app.vault.getFiles()
-      .filter(f =>
-        f.parent && f.parent.path === folder.path &&
-        AUDIO_EXTENSIONS.includes(f.extension.toLowerCase())
-      )
-      .sort((a, b) => a.basename.localeCompare(b.basename));
-  }
-
   async onClose() {}
 }
 
@@ -176,6 +237,20 @@ class AudioSidebarSettingTab extends PluginSettingTab {
           this.display();
           new Notice(`Default folder set to ${folder.path}`);
         }));
+
+    new Setting(containerEl)
+      .setName('Sound effects folder')
+      .setDesc('Vault-relative folder path used by the searchable one-shot SFX picker.')
+      .addText(text => {
+        text
+          .setPlaceholder('SFX')
+          .setValue(this.plugin.settings.sfxFolderPath)
+          .onChange(async (value) => {
+            this.plugin.settings.sfxFolderPath = value.trim();
+            await this.plugin.saveSettings();
+          });
+        text.inputEl.style.width = '100%';
+      });
   }
 }
 
@@ -196,6 +271,87 @@ class AudioSidebarPlugin extends Plugin {
 
   getDefaultFolder() {
     return this.getFolderByPath(this.settings.defaultFolderPath);
+  }
+
+  getSfxFolder() {
+    return this.getFolderByPath(this.settings.sfxFolderPath);
+  }
+
+  getAudioFileByPath(path) {
+    if (!path) return null;
+    const target = this.app.vault.getAbstractFileByPath(path);
+    if (!(target instanceof TFile)) return null;
+    return AUDIO_EXTENSIONS.includes(target.extension.toLowerCase()) ? target : null;
+  }
+
+  resolveSfxFile(source) {
+    const normalized = source.trim();
+    if (!normalized) return null;
+
+    const directFile = this.getAudioFileByPath(normalized);
+    if (directFile) return directFile;
+
+    const sfxFolder = this.getSfxFolder();
+    if (!sfxFolder) return null;
+
+    const lookup = normalized.toLowerCase();
+    return this.findAudioInFolder(sfxFolder).find(file =>
+      file.basename.toLowerCase() === lookup ||
+      `${file.basename}.${file.extension}`.toLowerCase() === lookup
+    ) || null;
+  }
+
+  findAudioInFolder(folder) {
+    return this.app.vault.getFiles()
+      .filter(f =>
+        f.parent && f.parent.path === folder.path &&
+        AUDIO_EXTENSIONS.includes(f.extension.toLowerCase())
+      )
+      .sort((a, b) => a.basename.localeCompare(b.basename));
+  }
+
+  openSfxPicker() {
+    const folder = this.getSfxFolder();
+    if (!folder) {
+      if (this.settings.sfxFolderPath) {
+        new Notice(`Audio Sidebar SFX folder not found: ${this.settings.sfxFolderPath}`);
+      } else {
+        new Notice('Set an SFX folder in Audio Sidebar settings first.');
+      }
+      return;
+    }
+
+    const files = this.findAudioInFolder(folder);
+    if (files.length === 0) {
+      new Notice(`No audio files found in ${folder.path}`);
+      return;
+    }
+
+    new AudioSfxModal(this.app, this, files).open();
+  }
+
+  playSfx(file) {
+    const audio = new Audio(this.app.vault.getResourcePath(file));
+    audio.loop = false;
+    audio.addEventListener('ended', () => {
+      this._activeSfx.delete(audio);
+    });
+    audio.addEventListener('pause', () => {
+      if (audio.ended) this._activeSfx.delete(audio);
+    });
+    this._activeSfx.add(audio);
+    audio.play().catch(() => {
+      this._activeSfx.delete(audio);
+      new Notice(`Could not play ${file.basename}`);
+    });
+  }
+
+  stopAllSfx() {
+    this._activeSfx.forEach(audio => {
+      audio.pause();
+      audio.currentTime = 0;
+    });
+    this._activeSfx.clear();
   }
 
   async loadFolderIntoLeaves(folder) {
@@ -224,6 +380,7 @@ class AudioSidebarPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
     this.selectedFolder = null;
+    this._activeSfx = new Set();
     this.registerView(VIEW_TYPE, (leaf) => new AudioSidebarView(leaf, this));
     this.addSettingTab(new AudioSidebarSettingTab(this.app, this));
     this.addRibbonIcon('music', 'Audio Sidebar', () => this.activateView());
@@ -296,6 +453,27 @@ class AudioSidebarPlugin extends Plugin {
       };
     });
 
+    this.registerMarkdownCodeBlockProcessor('audiosfx', (source, el) => {
+      const fileSource = source.trim();
+      const file = this.resolveSfxFile(fileSource);
+
+      const btn = el.createEl('button', { cls: 'audio-sb-codeblock-btn' });
+      btn.createEl('span', { text: '♪', cls: 'audio-sb-codeblock-icon' });
+      const labelEl = btn.createEl('span', { cls: 'audio-sb-codeblock-label' });
+      labelEl.createEl('span', {
+        text: file ? file.basename : fileSource,
+        cls: 'audio-sb-codeblock-folder'
+      });
+
+      if (!file) {
+        btn.createEl('span', { text: 'Sound not found', cls: 'audio-sb-codeblock-error' });
+        btn.disabled = true;
+        return;
+      }
+
+      btn.onclick = () => this.playSfx(file);
+    });
+
     this.addCommand({
       id: 'load-current-folder',
       name: 'Load audio from current note\'s folder',
@@ -305,6 +483,12 @@ class AudioSidebarPlugin extends Plugin {
         const folder = activeFile.parent;
         this.loadFolderIntoLeaves(folder);
       }
+    });
+
+    this.addCommand({
+      id: 'open-sfx-picker',
+      name: 'Open sound effects picker',
+      callback: () => this.openSfxPicker()
     });
   }
 
@@ -346,6 +530,7 @@ class AudioSidebarPlugin extends Plugin {
     if (this._explorerEl && this._explorerClickHandler) {
       this._explorerEl.removeEventListener('click', this._explorerClickHandler);
     }
+    this.stopAllSfx();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
   }
 }
