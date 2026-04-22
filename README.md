@@ -81,3 +81,8 @@ The command **Audio Sidebar: Open sound effects picker** opens the same one-shot
 ## Installation
 
 Copy the plugin folder into your vault's `.obsidian/plugins/` directory and enable it under Settings → Community Plugins.
+
+## Author
+
+Patriek Jeuriens
+GitHub: https://github.com/pjeurien/obsidian-audio-sidebar
