@@ -4,7 +4,12 @@ const VIEW_TYPE = 'audio-sidebar';
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'webm', 'aac'];
 const DEFAULT_SETTINGS = {
   defaultFolderPath: '',
-  sfxFolderPath: ''
+  sfxFolderPath: '',
+  allowMusicOverlap: false,
+  masterVolume: 100,
+  musicVolume: 100,
+  sfxVolume: 100,
+  musicFadeMs: 1500
 };
 
 class AudioSfxModal extends Modal {
@@ -88,8 +93,10 @@ class AudioSidebarView extends ItemView {
 
   draw(folder) {
     this._looping = true;
+    this._suppressPauseSync = false;
     const content = this.containerEl.children[1];
     content.empty();
+    content.addClass('audio-sb-view');
 
     const toolbar = content.createEl('div', { cls: 'audio-sb-toolbar' });
     const loadBtn = toolbar.createEl('button', { text: 'Load from selected folder', cls: 'audio-sb-load-btn' });
@@ -102,28 +109,271 @@ class AudioSidebarView extends ItemView {
     sfxBtn.onclick = () => this.plugin.openSfxPicker();
     const stopSfxBtn = sfxRow.createEl('button', { text: 'Stop sound effects', cls: 'audio-sb-load-btn audio-sb-sfx-btn' });
     stopSfxBtn.onclick = () => this.plugin.stopAllSfx();
+    this.renderVolumeControls(toolbar);
+
+    this._bodyEl = content.createEl('div', { cls: 'audio-sb-body' });
+    this._footerEl = content.createEl('div', { cls: 'audio-sb-footer' });
+    this._footerLabelEl = this._footerEl.createEl('div', { text: 'Now Playing', cls: 'audio-sb-footer-label' });
+    this._footerTrackEl = this._footerEl.createEl('div', { text: 'Nothing playing', cls: 'audio-sb-footer-track' });
+    this._footerMetaEl = this._footerEl.createEl('div', { text: '', cls: 'audio-sb-footer-meta' });
+    this._footerControlsEl = this._footerEl.createEl('div', { cls: 'audio-sb-footer-controls' });
+    this._footerPlayBtn = this._footerControlsEl.createEl('button', { text: 'Play', cls: 'audio-sb-footer-btn', type: 'button' });
+    this._footerStopBtn = this._footerControlsEl.createEl('button', { text: 'Stop', cls: 'audio-sb-footer-btn', type: 'button' });
+    this._footerPlayBtn.onclick = () => this.toggleCurrentTrack();
+    this._footerStopBtn.onclick = () => this.stopCurrentTrack();
 
     this._loopBtn = null;
+    this._currentAudio = null;
+    this._currentTrackName = '';
 
     if (!this._loadedFolder) return;
-    this.renderTracks(content, this._loadedFolder);
+    this.renderTracks(this._bodyEl, this._loadedFolder);
   }
 
   toggleLoop() {
     this._looping = !this._looping;
-    this._loopBtn.textContent = `⟳ Loop: ${this._looping ? 'On' : 'Off'}`;
+    this.updateLoopButton();
     this._loopBtn.classList.toggle('audio-sb-loop-on', this._looping);
     this._loopBtn.classList.toggle('audio-sb-loop-off', !this._looping);
-    const content = this.containerEl.children[1];
-    content.querySelectorAll('audio').forEach(a => a.loop = this._looping);
+    this.getTrackAudios().forEach(a => a.loop = this._looping);
+  }
+
+  toggleMusicOverlap() {
+    this.plugin.settings.allowMusicOverlap = !this.plugin.settings.allowMusicOverlap;
+    this.plugin.saveSettings();
+    this.applyMusicOverlapPolicy();
+    this.updateOverlapButton();
+  }
+
+  updateLoopButton() {
+    if (!this._loopBtn) return;
+    this._loopBtn.textContent = `⟳ Loop: ${this._looping ? 'On' : 'Off'}`;
+    this._loopBtn.title = this._looping ? 'Disable loop' : 'Enable loop';
+  }
+
+  updateOverlapButton() {
+    if (!this._overlapBtn) return;
+    const enabled = !!this.plugin.settings.allowMusicOverlap;
+    this._overlapBtn.textContent = `⇄ Overlap: ${enabled ? 'On' : 'Off'}`;
+    this._overlapBtn.title = enabled ? 'Disable music overlap' : 'Enable music overlap';
+    this._overlapBtn.classList.toggle('audio-sb-loop-on', enabled);
+    this._overlapBtn.classList.toggle('audio-sb-loop-off', !enabled);
+  }
+
+  getTrackAudios() {
+    return this._trackList ? Array.from(this._trackList.querySelectorAll('audio')) : [];
+  }
+
+  getFadeDurationMs() {
+    return this.plugin.clampFadeMs(this.plugin.settings.musicFadeMs);
+  }
+
+  renderVolumeControls(parentEl) {
+    const volumeRow = parentEl.createEl('div', { cls: 'audio-sb-volume-row' });
+    this._masterVolumeInput = this.createVolumeControl(volumeRow, 'Master', 'masterVolume');
+    this._musicVolumeInput = this.createVolumeControl(volumeRow, 'Music', 'musicVolume');
+    this._sfxVolumeInput = this.createVolumeControl(volumeRow, 'SFX', 'sfxVolume');
+  }
+
+  createVolumeControl(parentEl, label, settingKey) {
+    const wrap = parentEl.createEl('label', { cls: 'audio-sb-volume-control' });
+    wrap.createEl('span', { text: label, cls: 'audio-sb-volume-label' });
+    const valueEl = wrap.createEl('span', {
+      text: `${this.plugin.settings[settingKey]}%`,
+      cls: 'audio-sb-volume-value'
+    });
+    const input = wrap.createEl('input', {
+      cls: 'audio-sb-volume-slider',
+      type: 'range',
+      attr: { min: '0', max: '100', step: '1' }
+    });
+    input.value = String(this.plugin.settings[settingKey]);
+    input.addEventListener('input', () => {
+      const value = Number(input.value);
+      valueEl.textContent = `${value}%`;
+      this.plugin.previewVolumeSetting(settingKey, value);
+    });
+    input.addEventListener('change', async () => {
+      await this.plugin.updateVolumeSetting(settingKey, Number(input.value));
+    });
+    return input;
+  }
+
+  syncVolumeControls() {
+    const controls = [
+      [this._masterVolumeInput, this.plugin.settings.masterVolume],
+      [this._musicVolumeInput, this.plugin.settings.musicVolume],
+      [this._sfxVolumeInput, this.plugin.settings.sfxVolume]
+    ];
+
+    for (const [input, value] of controls) {
+      if (!input) continue;
+      input.value = String(value);
+      const valueEl = input.parentElement?.querySelector('.audio-sb-volume-value');
+      if (valueEl) valueEl.textContent = `${value}%`;
+    }
+  }
+
+  stopAllTracks(clearSelection = true) {
+    this.getTrackAudios().forEach(audio => {
+      this.clearFade(audio);
+      audio.dataset.fadeLevel = '1';
+      audio.pause();
+      audio.currentTime = 0;
+    });
+
+    if (clearSelection) {
+      this._currentAudio = null;
+      this._currentTrackName = '';
+    } else {
+      this.syncCurrentAudio();
+    }
+
+    this.updateNowPlaying();
+  }
+
+  syncCurrentAudio() {
+    const playingAudios = this.getTrackAudios()
+      .filter(audio => !audio.paused && !audio.ended)
+      .sort((a, b) => Number(b.dataset.lastStarted || 0) - Number(a.dataset.lastStarted || 0));
+
+    this._currentAudio = playingAudios[0] || null;
+    this._currentTrackName = this._currentAudio?.dataset.trackName || '';
+  }
+
+  applyMusicOverlapPolicy() {
+    if (this.plugin.settings.allowMusicOverlap) return;
+
+    this.syncCurrentAudio();
+    const current = this._currentAudio;
+    this.getTrackAudios().forEach(audio => {
+      if (audio !== current) this.fadeOutAndStop(audio, { resetTime: false });
+    });
+    this.updateNowPlaying();
+  }
+
+  applyMusicVolume() {
+    this.getTrackAudios().forEach(audio => {
+      this.applyAudioVolume(audio);
+    });
+  }
+
+  applyAudioVolume(audio) {
+    if (!audio) return;
+    const fadeLevel = Number(audio.dataset.fadeLevel || 1);
+    audio.volume = this.plugin.getEffectiveVolume('music') * fadeLevel;
+  }
+
+  clearFade(audio) {
+    if (!audio) return;
+    if (audio._audioSbFadeInterval) {
+      window.clearInterval(audio._audioSbFadeInterval);
+      audio._audioSbFadeInterval = null;
+    }
+  }
+
+  setFadeLevel(audio, fadeLevel) {
+    const clamped = Math.max(0, Math.min(1, fadeLevel));
+    audio.dataset.fadeLevel = String(clamped);
+    this.applyAudioVolume(audio);
+  }
+
+  startFade(audio, targetLevel, durationMs, options = {}) {
+    if (!audio) return Promise.resolve();
+
+    const duration = this.plugin.clampFadeMs(durationMs);
+    const target = Math.max(0, Math.min(1, targetLevel));
+    const startLevel = Number(audio.dataset.fadeLevel || 1);
+    this.clearFade(audio);
+
+    if (duration <= 0 || Math.abs(startLevel - target) < 0.01) {
+      this.setFadeLevel(audio, target);
+      if (options.pauseOnComplete) {
+        this._suppressPauseSync = true;
+        audio.pause();
+        this._suppressPauseSync = false;
+      }
+      if (options.resetTime) audio.currentTime = 0;
+      return Promise.resolve();
+    }
+
+    return new Promise(resolve => {
+      const startedAt = Date.now();
+      audio._audioSbFadeInterval = window.setInterval(() => {
+        const elapsed = Date.now() - startedAt;
+        const progress = Math.min(elapsed / duration, 1);
+        const nextLevel = startLevel + ((target - startLevel) * progress);
+        this.setFadeLevel(audio, nextLevel);
+
+        if (progress >= 1) {
+          this.clearFade(audio);
+          if (options.pauseOnComplete) {
+            this._suppressPauseSync = true;
+            audio.pause();
+            this._suppressPauseSync = false;
+          }
+          if (options.resetTime) audio.currentTime = 0;
+          resolve();
+        }
+      }, 50);
+    });
+  }
+
+  async fadeInTrack(audio) {
+    if (!audio) return;
+    audio.dataset.pendingFadeIn = '1';
+    try {
+      await audio.play();
+    } catch (error) {
+      delete audio.dataset.pendingFadeIn;
+      this.setFadeLevel(audio, 1);
+      throw error;
+    }
+  }
+
+  fadeOutAndStop(audio, options = {}) {
+    if (!audio || audio.paused || audio.ended) return Promise.resolve();
+    return this.startFade(audio, 0, this.getFadeDurationMs(), {
+      pauseOnComplete: true,
+      resetTime: options.resetTime !== false
+    }).then(() => {
+      this.setFadeLevel(audio, 1);
+      this.applyAudioVolume(audio);
+      if (this._currentAudio === audio) {
+        this.syncCurrentAudio();
+        this.updateNowPlaying();
+      }
+    });
+  }
+
+  handleTrackPlay(audio, trackName) {
+    audio.dataset.lastStarted = String(Date.now());
+    const otherPlayingAudios = this.getTrackAudios().filter(a => a !== audio && !a.paused && !a.ended);
+
+    if (!this.plugin.settings.allowMusicOverlap) {
+      otherPlayingAudios.forEach(other => {
+        this.fadeOutAndStop(other, { resetTime: false });
+      });
+    }
+
+    if (this.getFadeDurationMs() > 0) {
+      this.setFadeLevel(audio, 0);
+      this.startFade(audio, 1, this.getFadeDurationMs());
+    } else {
+      this.setFadeLevel(audio, 1);
+    }
+    delete audio.dataset.pendingFadeIn;
+
+    this._currentAudio = audio;
+    this._currentTrackName = trackName;
+    this.updateNowPlaying();
   }
 
   loadFolder(folder) {
     this._loadedFolder = folder;
-    const content = this.containerEl.children[1];
-    // Keep the toolbar, re-render below it
-    while (content.children.length > 1) content.removeChild(content.lastChild);
-    this.renderTracks(content, folder);
+    this.stopAllTracks();
+    this._bodyEl.empty();
+    this.renderTracks(this._bodyEl, folder);
   }
 
   renderTracks(content, folder) {
@@ -132,9 +382,14 @@ class AudioSidebarView extends ItemView {
     const header = content.createEl('div', { cls: 'audio-sb-header' });
     header.createEl('span', { text: folder.name || 'Root', cls: 'audio-sb-folder-name' });
     this._countEl = header.createEl('span', { text: `${audioFiles.length} track${audioFiles.length !== 1 ? 's' : ''}`, cls: 'audio-sb-count' });
-    this._loopBtn = header.createEl('button', { text: '⟳', cls: `audio-sb-loop-btn ${this._looping !== false ? 'audio-sb-loop-on' : 'audio-sb-loop-off'}` });
-    this._loopBtn.title = 'Toggle loop';
+    this._loopBtn = header.createEl('button', { cls: `audio-sb-loop-btn ${this._looping !== false ? 'audio-sb-loop-on' : 'audio-sb-loop-off'}` });
     this._loopBtn.onclick = () => this.toggleLoop();
+    this.updateLoopButton();
+    this._overlapBtn = header.createEl('button', {
+      cls: `audio-sb-loop-btn ${this.plugin.settings.allowMusicOverlap ? 'audio-sb-loop-on' : 'audio-sb-loop-off'}`
+    });
+    this._overlapBtn.onclick = () => this.toggleMusicOverlap();
+    this.updateOverlapButton();
 
     const searchEl = content.createEl('input', { cls: 'audio-sb-search', type: 'text' });
     searchEl.placeholder = 'Search tracks…';
@@ -155,12 +410,82 @@ class AudioSidebarView extends ItemView {
       audio.controls = true;
       audio.loop = this._looping !== false;
       audio.src = this.app.vault.getResourcePath(af);
+      audio.dataset.fadeLevel = '1';
+      this.applyAudioVolume(audio);
+      audio.dataset.trackName = af.basename;
       audio.addEventListener('play', () => {
-        this._trackList.querySelectorAll('audio').forEach(a => {
-          if (a !== audio) a.pause();
-        });
+        this.handleTrackPlay(audio, af.basename);
+      });
+      audio.addEventListener('loadedmetadata', () => {
+        if (this._currentAudio === audio) this.updateNowPlaying();
+      });
+      audio.addEventListener('durationchange', () => {
+        if (this._currentAudio === audio) this.updateNowPlaying();
+      });
+      audio.addEventListener('pause', () => {
+        if (this._suppressPauseSync) return;
+        if (this._currentAudio === audio) {
+          this.syncCurrentAudio();
+          this.updateNowPlaying();
+        }
+      });
+      audio.addEventListener('ended', () => {
+        if (this._currentAudio === audio) {
+          this.syncCurrentAudio();
+          this.updateNowPlaying();
+        }
       });
     }
+  }
+
+  updateNowPlaying() {
+    if (!this._footerTrackEl) return;
+    this._footerTrackEl.textContent = this._currentTrackName || 'Nothing playing';
+    if (this._footerMetaEl) {
+      this._footerMetaEl.textContent = this._currentAudio ? this.formatDuration(this._currentAudio.duration) : '';
+    }
+    this._footerEl.classList.toggle('audio-sb-footer-active', !!this._currentTrackName);
+    const hasTrack = !!this._currentAudio;
+    const isPlaying = hasTrack && !this._currentAudio.paused && !this._currentAudio.ended;
+    this._footerEl.classList.toggle('audio-sb-footer-playing', isPlaying);
+    if (this._footerPlayBtn) {
+      this._footerPlayBtn.disabled = !hasTrack;
+      this._footerPlayBtn.textContent = isPlaying ? 'Pause' : 'Play';
+    }
+    if (this._footerStopBtn) {
+      this._footerStopBtn.disabled = !hasTrack;
+    }
+  }
+
+  formatDuration(durationSeconds) {
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return '';
+    const totalSeconds = Math.round(durationSeconds);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  toggleCurrentTrack() {
+    if (!this._currentAudio) return;
+    if (this._currentAudio.paused || this._currentAudio.ended) {
+      if (this._currentAudio.ended) this._currentAudio.currentTime = 0;
+      this.fadeInTrack(this._currentAudio).catch(() => {
+        new Notice(`Could not play ${this._currentTrackName || 'track'}`);
+      });
+      return;
+    }
+    this.fadeOutAndStop(this._currentAudio);
+  }
+
+  stopCurrentTrack(clearSelection = true) {
+    if (!this._currentAudio) return;
+    const audio = this._currentAudio;
+    this.fadeOutAndStop(audio).then(() => {
+      if (clearSelection) {
+        this.syncCurrentAudio();
+      }
+      this.updateNowPlaying();
+    });
   }
 
   filterTracks(query) {
@@ -184,15 +509,18 @@ class AudioSidebarView extends ItemView {
       if (item.dataset.name.includes(trackName)) {
         const audio = item.querySelector('audio');
         if (audio) {
-          this._trackList.querySelectorAll('audio').forEach(a => a.pause());
           audio.currentTime = 0;
-          audio.play();
+          this.fadeInTrack(audio).catch(() => {
+            new Notice(`Could not play ${audio.dataset.trackName || 'track'}`);
+          });
         }
         break;
       }
     }
   }
-  async onClose() {}
+  async onClose() {
+    this.stopAllTracks();
+  }
 }
 
 class AudioSidebarSettingTab extends PluginSettingTab {
@@ -251,6 +579,61 @@ class AudioSidebarSettingTab extends PluginSettingTab {
           });
         text.inputEl.style.width = '100%';
       });
+
+    new Setting(containerEl)
+      .setName('Allow music overlap')
+      .setDesc('Let multiple music tracks play at once so you can transition between them manually.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.allowMusicOverlap)
+        .onChange(async (value) => {
+          this.plugin.settings.allowMusicOverlap = value;
+          await this.plugin.saveSettings();
+          this.plugin.refreshAllViews();
+        }));
+
+    new Setting(containerEl)
+      .setName('Master volume')
+      .setDesc('Overall volume applied to both music and sound effects.')
+      .addSlider(slider => slider
+        .setLimits(0, 100, 1)
+        .setValue(this.plugin.settings.masterVolume)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          await this.plugin.updateVolumeSetting('masterVolume', value);
+        }));
+
+    new Setting(containerEl)
+      .setName('Music volume')
+      .setDesc('Category volume for tracks played in the audio sidebar.')
+      .addSlider(slider => slider
+        .setLimits(0, 100, 1)
+        .setValue(this.plugin.settings.musicVolume)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          await this.plugin.updateVolumeSetting('musicVolume', value);
+        }));
+
+    new Setting(containerEl)
+      .setName('Sound effects volume')
+      .setDesc('Category volume for one-shot effects from the picker and embeds.')
+      .addSlider(slider => slider
+        .setLimits(0, 100, 1)
+        .setValue(this.plugin.settings.sfxVolume)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          await this.plugin.updateVolumeSetting('sfxVolume', value);
+        }));
+
+    new Setting(containerEl)
+      .setName('Music fade duration')
+      .setDesc('Fade in and fade out duration in milliseconds. Used for manual stops and automatic crossfades.')
+      .addSlider(slider => slider
+        .setLimits(0, 5000, 100)
+        .setValue(this.plugin.settings.musicFadeMs)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          await this.plugin.updateFadeSetting(value);
+        }));
   }
 }
 
@@ -261,6 +644,36 @@ class AudioSidebarPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  clampVolume(value) {
+    return Math.max(0, Math.min(100, Number(value) || 0));
+  }
+
+  clampFadeMs(value) {
+    return Math.max(0, Math.min(5000, Number(value) || 0));
+  }
+
+  getEffectiveVolume(category) {
+    const master = this.clampVolume(this.settings.masterVolume) / 100;
+    const categoryVolume = this.clampVolume(category === 'sfx' ? this.settings.sfxVolume : this.settings.musicVolume) / 100;
+    return master * categoryVolume;
+  }
+
+  previewVolumeSetting(key, value) {
+    this.settings[key] = this.clampVolume(value);
+    this.refreshAllViews();
+    this.refreshActiveSfxVolumes();
+  }
+
+  async updateVolumeSetting(key, value) {
+    this.previewVolumeSetting(key, value);
+    await this.saveSettings();
+  }
+
+  async updateFadeSetting(value) {
+    this.settings.musicFadeMs = this.clampFadeMs(value);
+    await this.saveSettings();
   }
 
   getFolderByPath(path) {
@@ -333,6 +746,7 @@ class AudioSidebarPlugin extends Plugin {
   playSfx(file) {
     const audio = new Audio(this.app.vault.getResourcePath(file));
     audio.loop = false;
+    audio.volume = this.getEffectiveVolume('sfx');
     audio.addEventListener('ended', () => {
       this._activeSfx.delete(audio);
     });
@@ -354,6 +768,13 @@ class AudioSidebarPlugin extends Plugin {
     this._activeSfx.clear();
   }
 
+  refreshActiveSfxVolumes() {
+    const volume = this.getEffectiveVolume('sfx');
+    this._activeSfx.forEach(audio => {
+      audio.volume = volume;
+    });
+  }
+
   async loadFolderIntoLeaves(folder) {
     this.selectedFolder = folder;
     await this.activateView();
@@ -361,6 +782,18 @@ class AudioSidebarPlugin extends Plugin {
     for (const leaf of leaves) {
       if (leaf.view instanceof AudioSidebarView) {
         leaf.view.loadFolder(folder);
+      }
+    }
+  }
+
+  refreshAllViews() {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    for (const leaf of leaves) {
+      if (leaf.view instanceof AudioSidebarView) {
+        leaf.view.applyMusicOverlapPolicy();
+        leaf.view.applyMusicVolume();
+        leaf.view.syncVolumeControls();
+        leaf.view.updateOverlapButton();
       }
     }
   }

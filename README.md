@@ -8,7 +8,10 @@ An Obsidian plugin that provides a persistent audio player in the right sidebar,
 - Set a default vault folder in plugin settings and load it automatically
 - Open a searchable one-shot SFX picker from the sidebar or command palette
 - Audio keeps playing no matter which note you open or how far you scroll
-- Only one track plays at a time — starting a new track pauses the previous one
+- Single-track playback by default, with optional overlap for manual transitions
+- Optional music overlap toggle for manual transitions between tracks
+- Separate master, music, and SFX volume controls
+- Music fade in, fade out, and automatic crossfade between tracks
 - Loop toggle
 - Real-time search to filter tracks by name
 - Tracks sorted alphabetically
@@ -25,12 +28,17 @@ An Obsidian plugin that provides a persistent audio player in the right sidebar,
 
 Optional: set a default folder under **Settings → Community Plugins → Audio Sidebar**. Use a vault-relative path such as `Music/Ambient`.
 Optional: set a separate **Sound effects folder** there as well, for example `SFX`.
+Optional: enable **Allow music overlap** there if you want multiple music tracks to keep playing during transitions.
+Optional: set **Master volume**, **Music volume**, and **Sound effects volume** there, or adjust them live from the sidebar toolbar.
+Optional: set **Music fade duration** to control fade-ins, fade-outs, and crossfades between music tracks.
 
 1. Click a folder in the file explorer (this selects it silently)
 2. Click **Load from selected folder** in the Audio Sidebar
 3. Press play on any track
 
 The sidebar will not change or clear when you switch notes or tabs. Click the button again to load a different folder.
+Use the **Overlap** toggle in the track list header to switch between single-track playback and layered music playback.
+When overlap is off, starting a new track crossfades from the current track into the new one using the configured fade duration.
 
 Use **Play sound effect** in the sidebar toolbar to open a searchable picker. Choosing a result plays it once without changing the current music list.
 
