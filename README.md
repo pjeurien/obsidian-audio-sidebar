@@ -40,7 +40,7 @@ The sidebar will not change or clear when you switch notes or tabs. Click the bu
 Use the **Overlap** toggle in the track list header to switch between single-track playback and layered music playback.
 When overlap is off, starting a new track crossfades from the current track into the new one using the configured fade duration.
 
-Use **Play sound effect** in the sidebar toolbar to open a searchable picker. Choosing a result plays it once without changing the current music list.
+Use **Play sound effect** in the sidebar toolbar to open a searchable picker. Choosing a result plays it once without changing the current music list. Each entry has a small copy button on the right — clicking it copies a ready-to-paste `audiosfx` codeblock to your clipboard.
 
 ### Codeblock
 
@@ -66,11 +66,13 @@ To play a one-shot sound effect directly from a note, use `audiosfx`:
 
 ````
 ```audiosfx
-SFX/Doors/Creaking Door.mp3
+SFX/Doors#Creaking Door
 ```
 ````
 
-If you have set a **Sound effects folder** in plugin settings, you can also use just the file name or basename:
+The content is `folder/path#filename` — the part before `#` is the vault-relative folder path, and the part after is the file's basename (without extension). This plays the effect once and does not loop.
+
+If you have set a **Sound effects folder** in plugin settings, you can also use just the basename and the plugin will search that folder automatically:
 
 ````
 ```audiosfx
@@ -78,7 +80,7 @@ Creaking Door
 ```
 ````
 
-This plays the effect once and does not loop.
+The easiest way to get the correct syntax is to open the SFX picker and click the copy button next to any sound — it copies a ready-to-paste codeblock for that file.
 
 ### Command
 

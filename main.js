@@ -1,4 +1,4 @@
-const { Modal, Notice, Plugin, ItemView, PluginSettingTab, Setting, TFolder, TFile } = require('obsidian');
+const { Modal, Notice, Plugin, ItemView, PluginSettingTab, Setting, TFolder, TFile, setIcon } = require('obsidian');
 
 const VIEW_TYPE = 'audio-sidebar';
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'webm', 'aac'];
@@ -11,6 +11,10 @@ const DEFAULT_SETTINGS = {
   sfxVolume: 100,
   musicFadeMs: 1500
 };
+
+// ─── SFX Picker Modal ────────────────────────────────────────────────────────
+// Searchable modal for one-shot sound effects. Opened via the sidebar toolbar
+// or the "Open sound effects picker" command.
 
 class AudioSfxModal extends Modal {
   constructor(app, plugin, files) {
@@ -59,7 +63,9 @@ class AudioSfxModal extends Modal {
     }
 
     for (const file of this.filteredFiles) {
-      const itemEl = listEl.createEl('button', {
+      const rowEl = listEl.createEl('div', { cls: 'audio-sb-sfx-modal-row' });
+
+      const itemEl = rowEl.createEl('button', {
         cls: 'audio-sb-sfx-item',
         type: 'button'
       });
@@ -69,6 +75,22 @@ class AudioSfxModal extends Modal {
         this.close();
         this.plugin.playSfx(file);
       };
+
+      // Copy button: produces a ready-to-paste audiosfx codeblock using
+      // folder#basename syntax so the path is explicit and always resolvable.
+      const copyBtn = rowEl.createEl('button', {
+        cls: 'audio-sb-sfx-copy',
+        type: 'button',
+        attr: { 'aria-label': 'Copy audiosfx codeblock' }
+      });
+      setIcon(copyBtn, 'copy');
+      copyBtn.onclick = () => {
+        const parent = file.parent;
+        const folderPath = parent && parent.path && parent.path !== '/' ? parent.path : null;
+        const ref = folderPath ? `${folderPath}#${file.basename}` : file.basename;
+        navigator.clipboard.writeText(`\`\`\`audiosfx\n${ref}\n\`\`\``);
+        new Notice('Codeblock copied');
+      };
     }
   }
 
@@ -76,6 +98,10 @@ class AudioSfxModal extends Modal {
     this.contentEl.empty();
   }
 }
+
+// ─── Sidebar View ─────────────────────────────────────────────────────────────
+// Persistent ItemView rendered in the right panel. Survives note navigation
+// because Obsidian only unmounts it when the leaf is explicitly closed.
 
 class AudioSidebarView extends ItemView {
   constructor(leaf, plugin) {
@@ -91,6 +117,8 @@ class AudioSidebarView extends ItemView {
     this.draw(null);
   }
 
+  // Rebuilds the entire sidebar DOM. Called once on open and again after a
+  // settings change that requires a full redraw (e.g. overlap toggle).
   draw(folder) {
     this._looping = true;
     this._suppressPauseSync = false;
@@ -188,6 +216,7 @@ class AudioSidebarView extends ItemView {
       attr: { min: '0', max: '100', step: '1' }
     });
     input.value = String(this.plugin.settings[settingKey]);
+    // 'input' previews volume live while dragging; 'change' persists it.
     input.addEventListener('input', () => {
       const value = Number(input.value);
       valueEl.textContent = `${value}%`;
@@ -232,6 +261,8 @@ class AudioSidebarView extends ItemView {
     this.updateNowPlaying();
   }
 
+  // Determines the active track by picking the most recently started playing
+  // audio. Used after overlap-policy enforcement to keep the footer accurate.
   syncCurrentAudio() {
     const playingAudios = this.getTrackAudios()
       .filter(audio => !audio.paused && !audio.ended)
@@ -241,6 +272,7 @@ class AudioSidebarView extends ItemView {
     this._currentTrackName = this._currentAudio?.dataset.trackName || '';
   }
 
+  // When overlap is turned off, fades out every track except the most recent.
   applyMusicOverlapPolicy() {
     if (this.plugin.settings.allowMusicOverlap) return;
 
@@ -258,6 +290,8 @@ class AudioSidebarView extends ItemView {
     });
   }
 
+  // Volume = effective master×category volume scaled by the current fade level
+  // so that fades work independently of the volume sliders.
   applyAudioVolume(audio) {
     if (!audio) return;
     const fadeLevel = Number(audio.dataset.fadeLevel || 1);
@@ -278,6 +312,8 @@ class AudioSidebarView extends ItemView {
     this.applyAudioVolume(audio);
   }
 
+  // Animates volume between the current fade level and targetLevel over
+  // durationMs using a 50 ms tick interval. Resolves when the fade completes.
   startFade(audio, targetLevel, durationMs, options = {}) {
     if (!audio) return Promise.resolve();
 
@@ -289,6 +325,7 @@ class AudioSidebarView extends ItemView {
     if (duration <= 0 || Math.abs(startLevel - target) < 0.01) {
       this.setFadeLevel(audio, target);
       if (options.pauseOnComplete) {
+        // Suppress the pause event so it doesn't incorrectly clear _currentAudio.
         this._suppressPauseSync = true;
         audio.pause();
         this._suppressPauseSync = false;
@@ -319,6 +356,8 @@ class AudioSidebarView extends ItemView {
     });
   }
 
+  // Sets fadeLevel to 0 before play() so handleTrackPlay can fade in from
+  // silence. The pendingFadeIn flag signals handleTrackPlay to run the fade.
   async fadeInTrack(audio) {
     if (!audio) return;
     audio.dataset.pendingFadeIn = '1';
@@ -337,6 +376,7 @@ class AudioSidebarView extends ItemView {
       pauseOnComplete: true,
       resetTime: options.resetTime !== false
     }).then(() => {
+      // Restore fade level so the next play starts at full volume.
       this.setFadeLevel(audio, 1);
       this.applyAudioVolume(audio);
       if (this._currentAudio === audio) {
@@ -346,6 +386,8 @@ class AudioSidebarView extends ItemView {
     });
   }
 
+  // Called by the 'play' event on every track audio element.
+  // Handles crossfading out other tracks and fading the new one in.
   handleTrackPlay(audio, trackName) {
     audio.dataset.lastStarted = String(Date.now());
     const otherPlayingAudios = this.getTrackAudios().filter(a => a !== audio && !a.paused && !a.ended);
@@ -405,8 +447,11 @@ class AudioSidebarView extends ItemView {
     for (const af of audioFiles) {
       const item = this._trackList.createEl('div', { cls: 'audio-sb-item' });
       item.dataset.name = af.basename.toLowerCase();
+
       item.createEl('div', { text: af.basename, cls: 'audio-sb-track-name' });
-      const audio = item.createEl('audio');
+
+      const playerRow = item.createEl('div', { cls: 'audio-sb-player-row' });
+      const audio = playerRow.createEl('audio');
       audio.controls = true;
       audio.loop = this._looping !== false;
       audio.src = this.app.vault.getResourcePath(af);
@@ -423,6 +468,8 @@ class AudioSidebarView extends ItemView {
         if (this._currentAudio === audio) this.updateNowPlaying();
       });
       audio.addEventListener('pause', () => {
+        // _suppressPauseSync is set during programmatic pauses (fade-out) to
+        // prevent incorrectly clearing _currentAudio mid-transition.
         if (this._suppressPauseSync) return;
         if (this._currentAudio === audio) {
           this.syncCurrentAudio();
@@ -435,6 +482,18 @@ class AudioSidebarView extends ItemView {
           this.updateNowPlaying();
         }
       });
+
+      const copyBtn = playerRow.createEl('button', {
+        cls: 'audio-sb-track-copy',
+        type: 'button',
+        attr: { 'aria-label': 'Copy Track Codeblock' }
+      });
+      setIcon(copyBtn, 'copy');
+      copyBtn.onclick = () => {
+        const ref = `${folder.path}#${af.basename}`;
+        navigator.clipboard.writeText(`\`\`\`audiosidebar\n${ref}\n\`\`\``);
+        new Notice('Codeblock copied');
+      };
     }
   }
 
@@ -502,6 +561,8 @@ class AudioSidebarView extends ItemView {
     }
   }
 
+  // Finds a track by partial name match and starts playing it. Used by the
+  // audiosidebar codeblock processor to auto-play after loading a folder.
   playTrack(trackName) {
     if (!this._trackList) return;
     const items = this._trackList.querySelectorAll('.audio-sb-item');
@@ -518,10 +579,13 @@ class AudioSidebarView extends ItemView {
       }
     }
   }
+
   async onClose() {
     this.stopAllTracks();
   }
 }
+
+// ─── Settings Tab ─────────────────────────────────────────────────────────────
 
 class AudioSidebarSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
@@ -637,6 +701,8 @@ class AudioSidebarSettingTab extends PluginSettingTab {
   }
 }
 
+// ─── Plugin ───────────────────────────────────────────────────────────────────
+
 class AudioSidebarPlugin extends Plugin {
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -654,12 +720,15 @@ class AudioSidebarPlugin extends Plugin {
     return Math.max(0, Math.min(5000, Number(value) || 0));
   }
 
+  // Returns a 0–1 multiplier combining master and category volumes.
   getEffectiveVolume(category) {
     const master = this.clampVolume(this.settings.masterVolume) / 100;
     const categoryVolume = this.clampVolume(category === 'sfx' ? this.settings.sfxVolume : this.settings.musicVolume) / 100;
     return master * categoryVolume;
   }
 
+  // Updates the in-memory setting and refreshes all live audio without saving,
+  // so the slider feels responsive while dragging.
   previewVolumeSetting(key, value) {
     this.settings[key] = this.clampVolume(value);
     this.refreshAllViews();
@@ -697,12 +766,31 @@ class AudioSidebarPlugin extends Plugin {
     return AUDIO_EXTENSIONS.includes(target.extension.toLowerCase()) ? target : null;
   }
 
+  // Resolves a codeblock source string to an audio TFile using three strategies
+  // in order: exact vault path → folder#basename syntax → basename search in
+  // the configured SFX folder.
   resolveSfxFile(source) {
     const normalized = source.trim();
     if (!normalized) return null;
 
     const directFile = this.getAudioFileByPath(normalized);
     if (directFile) return directFile;
+
+    // Support folder#filename syntax to pick a file from a specific folder.
+    const hashIdx = normalized.indexOf('#');
+    if (hashIdx !== -1) {
+      const folderPath = normalized.slice(0, hashIdx).trim();
+      const filename = normalized.slice(hashIdx + 1).trim();
+      const folder = this.getFolderByPath(folderPath);
+      if (folder && filename) {
+        const lookup = filename.toLowerCase();
+        const found = this.findAudioInFolder(folder).find(file =>
+          file.basename.toLowerCase() === lookup ||
+          `${file.basename}.${file.extension}`.toLowerCase() === lookup
+        );
+        if (found) return found;
+      }
+    }
 
     const sfxFolder = this.getSfxFolder();
     if (!sfxFolder) return null;
@@ -743,6 +831,9 @@ class AudioSidebarPlugin extends Plugin {
     new AudioSfxModal(this.app, this, files).open();
   }
 
+  // Creates a detached Audio element so SFX plays independently of the
+  // sidebar track list. Active instances are tracked in _activeSfx so they
+  // can be stopped and have their volume updated as a group.
   playSfx(file) {
     const audio = new Audio(this.app.vault.getResourcePath(file));
     audio.loop = false;
@@ -823,6 +914,7 @@ class AudioSidebarPlugin extends Plugin {
       this.loadDefaultFolderIntoView();
     });
 
+    // File explorer context menu: folders get a codeblock-copy item.
     this.registerEvent(
       this.app.workspace.on('file-menu', (menu, file) => {
         if (!(file instanceof TFolder)) return;
@@ -837,21 +929,43 @@ class AudioSidebarPlugin extends Plugin {
       })
     );
 
+    // File explorer context menu: audio files get an "Audio" submenu with
+    // codeblock options for both the music sidebar and one-shot SFX.
     this.registerEvent(
       this.app.workspace.on('file-menu', (menu, file) => {
         if (!(file instanceof TFile)) return;
         if (!AUDIO_EXTENSIONS.includes(file.extension.toLowerCase())) return;
-        menu.addItem(item => item
-          .setTitle('Copy Audio Sidebar link')
-          .setIcon('music')
-          .onClick(() => {
-            const code = `\`\`\`audiosidebar\n${file.parent.path}#${file.basename}\n\`\`\``;
-            navigator.clipboard.writeText(code);
-          })
-        );
+        menu.addItem(item => {
+          item.setTitle('Audio').setIcon('music');
+          const submenu = item.setSubmenu();
+          submenu.addItem(sub => sub
+            .setTitle('Copy Track Codeblock')
+            .setIcon('copy')
+            .onClick(() => {
+              const code = `\`\`\`audiosidebar\n${file.parent.path}#${file.basename}\n\`\`\``;
+              navigator.clipboard.writeText(code);
+              new Notice('Codeblock copied');
+            })
+          );
+          submenu.addItem(sub => sub
+            .setTitle('Copy SFX Codeblock')
+            .setIcon('copy')
+            .onClick(() => {
+              const parent = file.parent;
+              const folderPath = parent && parent.path !== '/' ? parent.path : null;
+              const ref = folderPath ? `${folderPath}#${file.basename}` : file.basename;
+              const code = `\`\`\`audiosfx\n${ref}\n\`\`\``;
+              navigator.clipboard.writeText(code);
+              new Notice('Codeblock copied');
+            })
+          );
+        });
       })
     );
 
+    // Loads the specified folder into the sidebar and optionally auto-plays a
+    // track. The setTimeout gives loadFolder time to render the track list
+    // before playTrack tries to query it.
     this.registerMarkdownCodeBlockProcessor('audiosidebar', (source, el) => {
       const [folderPart, trackPart] = source.trim().split('#');
       const folderName = folderPart.trim();
@@ -925,6 +1039,8 @@ class AudioSidebarPlugin extends Plugin {
     });
   }
 
+  // Tracks which folder is selected in the file explorer by listening for
+  // clicks on nav-folder-title elements. Obsidian has no public API for this.
   hookFileExplorer() {
     const explorerLeaf = this.app.workspace.getLeavesOfType('file-explorer')[0];
     if (!explorerLeaf) return;
