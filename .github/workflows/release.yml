@@ -1,0 +1,31 @@
+name: Release Obsidian plugin
+on:
+  push:
+    tags:
+      - "*" # Triggers on any tag push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20" # Or your preferred version
+
+      - name: Install and Build
+        run: |
+          npm install
+          npm run build
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          # List the specific files Obsidian needs
+          artifacts: "main.js,manifest.json,styles.css,Readme.MD,LICENSE,data.json" 
+          token: ${{ secrets.GITHUB_TOKEN }}
