@@ -1,6 +1,6 @@
 {
-  "defaultFolderPath": "",
-  "sfxFolderPath": "",
+  "defaultFolderPath": "Dungeons and Dragons/Assets/Bardify",
+  "sfxFolderPath": "Dungeons and Dragons/Assets/Sounds",
   "allowMusicOverlap": false,
   "masterVolume": 100,
   "musicVolume": 100,
