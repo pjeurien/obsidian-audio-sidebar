@@ -17,5 +17,5 @@ jobs:
         with:
           allowUpdates: true
           # List the specific files Obsidian needs
-          artifacts: "main.js,manifest.json,styles.css,Readme.MD,LICENSE,data.json" 
+          artifacts: "main.js,manifest.json,styles.css,Readme.MD,LICENSE" 
           token: ${{ secrets.GITHUB_TOKEN }}
