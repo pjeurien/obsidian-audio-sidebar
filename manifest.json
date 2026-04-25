@@ -1,7 +1,7 @@
 {
     "id":  "audio-sidebar",
     "name":  "Audio Sidebar",
-    "version":  "1.2.2",
+    "version":  "1.2.3",
     "minAppVersion":  "0.15.0",
     "description":  "A persistent sound panel in the sidebar for playing music tracks and one-shot sound effects, with volume control, crossfading, and embeddable note buttons.",
     "author":  "Patriek Jeuriens",

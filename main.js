@@ -1,4 +1,4 @@
-const { Modal, Notice, Plugin, ItemView, PluginSettingTab, Setting, TFolder, TFile, setIcon } = require('obsidian');
+const { Modal, Notice, Plugin, ItemView, PluginSettingTab, Setting, TFolder, TFile, setIcon, normalizePath } = require('obsidian');
 
 const VIEW_TYPE = 'audio-sidebar';
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'webm', 'aac'];
@@ -152,7 +152,7 @@ class AudioSidebarView extends ItemView {
 
     this._bodyEl = content.createEl('div', { cls: 'audio-sb-body' });
     this._footerEl = content.createEl('div', { cls: 'audio-sb-footer' });
-    this._footerLabelEl = this._footerEl.createEl('div', { text: 'Now Playing', cls: 'audio-sb-footer-label' });
+    this._footerLabelEl = this._footerEl.createEl('div', { text: 'Now playing', cls: 'audio-sb-footer-label' });
     this._footerTrackEl = this._footerEl.createEl('div', { text: 'Nothing playing', cls: 'audio-sb-footer-track' });
     this._footerMetaEl = this._footerEl.createEl('div', { text: '', cls: 'audio-sb-footer-meta' });
     this._footerControlsEl = this._footerEl.createEl('div', { cls: 'audio-sb-footer-controls' });
@@ -497,7 +497,7 @@ class AudioSidebarView extends ItemView {
       const copyBtn = playerRow.createEl('button', {
         cls: 'audio-sb-track-copy',
         type: 'button',
-        attr: { 'aria-label': 'Copy Track Codeblock' }
+        attr: { 'aria-label': 'Copy track codeblock' }
       });
       setIcon(copyBtn, 'copy');
       copyBtn.onclick = () => {
@@ -564,7 +564,7 @@ class AudioSidebarView extends ItemView {
     let visible = 0;
     this._trackList.querySelectorAll('.audio-sb-item').forEach(item => {
       const match = !q || item.dataset.name.includes(q);
-      item.style.display = match ? '' : 'none';
+      item.toggleClass('audio-sb-hidden', !match);
       if (match) visible++;
     });
     if (this._countEl) {
@@ -623,7 +623,7 @@ class AudioSidebarSettingTab extends PluginSettingTab {
             const folder = this.plugin.getDefaultFolder();
             if (folder) await this.plugin.loadFolderIntoLeaves(folder);
           });
-        text.inputEl.style.width = '100%';
+        text.inputEl.addClass('audio-sb-settings-input');
       });
 
     new Setting(containerEl)
@@ -656,7 +656,7 @@ class AudioSidebarSettingTab extends PluginSettingTab {
             this.plugin.settings.sfxFolderPath = value.trim();
             await this.plugin.saveSettings();
           });
-        text.inputEl.style.width = '100%';
+        text.inputEl.addClass('audio-sb-settings-input');
       });
 
     new Setting(containerEl)
@@ -762,7 +762,7 @@ class AudioSidebarPlugin extends Plugin {
 
   getFolderByPath(path) {
     if (!path) return null;
-    const target = this.app.vault.getAbstractFileByPath(path);
+    const target = this.app.vault.getAbstractFileByPath(normalizePath(path));
     return target instanceof TFolder ? target : null;
   }
 
@@ -776,7 +776,7 @@ class AudioSidebarPlugin extends Plugin {
 
   getAudioFileByPath(path) {
     if (!path) return null;
-    const target = this.app.vault.getAbstractFileByPath(path);
+    const target = this.app.vault.getAbstractFileByPath(normalizePath(path));
     if (!(target instanceof TFile)) return null;
     return AUDIO_EXTENSIONS.includes(target.extension.toLowerCase()) ? target : null;
   }
@@ -818,11 +818,8 @@ class AudioSidebarPlugin extends Plugin {
   }
 
   findAudioInFolder(folder) {
-    return this.app.vault.getFiles()
-      .filter(f =>
-        f.parent && f.parent.path === folder.path &&
-        AUDIO_EXTENSIONS.includes(f.extension.toLowerCase())
-      )
+    return folder.children
+      .filter(f => f instanceof TFile && AUDIO_EXTENSIONS.includes(f.extension.toLowerCase()))
       .sort((a, b) => a.basename.localeCompare(b.basename));
   }
 
@@ -954,7 +951,7 @@ class AudioSidebarPlugin extends Plugin {
           item.setTitle('Audio').setIcon('music');
           const submenu = item.setSubmenu();
           submenu.addItem(sub => sub
-            .setTitle('Copy Track Codeblock')
+            .setTitle('Copy track codeblock')
             .setIcon('copy')
             .onClick(() => {
               const code = `\`\`\`audiosidebar\n${file.parent.path}#${file.basename}\n\`\`\``;
@@ -963,7 +960,7 @@ class AudioSidebarPlugin extends Plugin {
             })
           );
           submenu.addItem(sub => sub
-            .setTitle('Copy SFX Codeblock')
+            .setTitle('Copy SFX codeblock')
             .setIcon('copy')
             .onClick(() => {
               const parent = file.parent;
@@ -1056,13 +1053,12 @@ class AudioSidebarPlugin extends Plugin {
 
   // Tracks which folder is selected in the file explorer by listening for
   // clicks on nav-folder-title elements. Obsidian has no public API for this.
+  // registerDomEvent ensures the listener is removed automatically on unload.
   hookFileExplorer() {
     const explorerLeaf = this.app.workspace.getLeavesOfType('file-explorer')[0];
     if (!explorerLeaf) return;
 
-    const explorerEl = explorerLeaf.view.containerEl;
-
-    this._explorerClickHandler = (e) => {
+    this.registerDomEvent(explorerLeaf.view.containerEl, 'click', (e) => {
       const folderTitleEl = e.target.closest('.nav-folder-title');
       if (!folderTitleEl) return;
       const folderPath = folderTitleEl.dataset.path;
@@ -1071,10 +1067,7 @@ class AudioSidebarPlugin extends Plugin {
         ? this.app.vault.getRoot()
         : this.app.vault.getAbstractFileByPath(folderPath);
       if (folder) this.selectedFolder = folder;
-    };
-
-    explorerEl.addEventListener('click', this._explorerClickHandler);
-    this._explorerEl = explorerEl;
+    });
   }
 
   async activateView() {
@@ -1091,9 +1084,6 @@ class AudioSidebarPlugin extends Plugin {
   }
 
   onunload() {
-    if (this._explorerEl && this._explorerClickHandler) {
-      this._explorerEl.removeEventListener('click', this._explorerClickHandler);
-    }
     this.stopAllSfx();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
   }

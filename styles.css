@@ -1,3 +1,11 @@
+.audio-sb-hidden {
+  display: none;
+}
+
+.audio-sb-settings-input {
+  width: 100%;
+}
+
 .audio-sb-view {
   height: 100%;
   display: flex;
