@@ -127,10 +127,21 @@ class AudioSidebarView extends ItemView {
     content.addClass('audio-sb-view');
 
     const toolbar = content.createEl('div', { cls: 'audio-sb-toolbar' });
-    const loadBtn = toolbar.createEl('button', { text: 'Load from selected folder', cls: 'audio-sb-load-btn' });
+    const loadRow = toolbar.createEl('div', { cls: 'audio-sb-load-row' });
+    const loadBtn = loadRow.createEl('button', { text: 'Load from selected folder', cls: 'audio-sb-load-btn' });
     loadBtn.onclick = () => {
       const folder = this.plugin.selectedFolder;
       if (folder) this.loadFolder(folder);
+    };
+    const cogBtn = loadRow.createEl('button', {
+      cls: 'audio-sb-cog-btn',
+      type: 'button',
+      attr: { 'aria-label': 'Audio Sidebar settings' }
+    });
+    setIcon(cogBtn, 'settings');
+    cogBtn.onclick = () => {
+      this.plugin.app.setting.open();
+      this.plugin.app.setting.openTabById('audio-sidebar');
     };
     const sfxRow = toolbar.createEl('div', { cls: 'audio-sb-sfx-row' });
     const sfxBtn = sfxRow.createEl('button', { text: 'Play sound effect', cls: 'audio-sb-load-btn audio-sb-sfx-btn' });
@@ -607,6 +618,10 @@ class AudioSidebarSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.defaultFolderPath = value.trim();
             await this.plugin.saveSettings();
+            // Load immediately if the typed path already resolves to a folder,
+            // so the sidebar updates without needing a restart.
+            const folder = this.plugin.getDefaultFolder();
+            if (folder) await this.plugin.loadFolderIntoLeaves(folder);
           });
         text.inputEl.style.width = '100%';
       });

@@ -1,7 +1,7 @@
 {
     "id":  "audio-sidebar",
     "name":  "Audio Sidebar",
-    "version":  "1.2.0",
+    "version":  "1.2.1",
     "minAppVersion":  "0.15.0",
     "description":  "Load audio files from a folder in the sidebar.",
     "author":  "Patriek Jeuriens",
