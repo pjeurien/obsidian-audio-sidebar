@@ -5,10 +5,12 @@ const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'webm', 'aac'];
 const DEFAULT_SETTINGS = {
   defaultFolderPath: '',
   sfxFolderPath: '',
+  loopFolderPath: '',
   allowMusicOverlap: false,
   masterVolume: 100,
   musicVolume: 100,
   sfxVolume: 100,
+  loopVolume: 100,
   musicFadeMs: 1500
 };
 
@@ -99,6 +101,98 @@ class AudioSfxModal extends Modal {
   }
 }
 
+// ─── Loop Picker Modal ───────────────────────────────────────────────────────
+// Searchable modal for looping ambient sounds. Clicking a row toggles the loop
+// on or off; active loops are highlighted so you can see what's running.
+
+class AudioLoopModal extends Modal {
+  constructor(app, plugin, files) {
+    super(app);
+    this.plugin = plugin;
+    this.files = files;
+    this.filteredFiles = files;
+  }
+
+  onOpen() {
+    this.modalEl.addClass('audio-sb-sfx-modal');
+    const { contentEl } = this;
+    contentEl.empty();
+
+    const searchEl = contentEl.createEl('input', {
+      cls: 'audio-sb-sfx-search',
+      type: 'text',
+      placeholder: 'Search loops...'
+    });
+
+    this._listEl = contentEl.createEl('div', { cls: 'audio-sb-sfx-list' });
+    this.renderList();
+
+    searchEl.addEventListener('input', () => {
+      const query = searchEl.value.toLowerCase().trim();
+      this.filteredFiles = this.files.filter(file =>
+        !query ||
+        file.basename.toLowerCase().includes(query) ||
+        file.path.toLowerCase().includes(query)
+      );
+      this.renderList();
+    });
+
+    searchEl.focus();
+  }
+
+  renderList() {
+    const listEl = this._listEl;
+    listEl.empty();
+
+    if (this.filteredFiles.length === 0) {
+      listEl.createEl('div', {
+        text: 'No matching loops.',
+        cls: 'audio-sb-sfx-empty'
+      });
+      return;
+    }
+
+    for (const file of this.filteredFiles) {
+      const isActive = this.plugin._activeLoops.has(file.path);
+      const rowEl = listEl.createEl('div', { cls: 'audio-sb-sfx-modal-row' });
+
+      const itemEl = rowEl.createEl('button', {
+        cls: `audio-sb-sfx-item${isActive ? ' audio-sb-loop-item-active' : ''}`,
+        type: 'button'
+      });
+      const iconEl = itemEl.createEl('span', { cls: 'audio-sb-sfx-icon' });
+      setIcon(iconEl, isActive ? 'square' : 'play');
+      itemEl.createEl('div', { text: file.basename, cls: 'audio-sb-sfx-name' });
+      itemEl.onclick = () => {
+        if (this.plugin._activeLoops.has(file.path)) {
+          this.plugin.stopLoop(file);
+        } else {
+          this.plugin.playLoop(file);
+        }
+        this.renderList();
+      };
+
+      const copyBtn = rowEl.createEl('button', {
+        cls: 'audio-sb-sfx-copy',
+        type: 'button',
+        attr: { 'aria-label': 'Copy audioloop codeblock' }
+      });
+      setIcon(copyBtn, 'copy');
+      copyBtn.onclick = () => {
+        const parent = file.parent;
+        const folderPath = parent && parent.path && parent.path !== '/' ? parent.path : null;
+        const ref = folderPath ? `${folderPath}#${file.basename}` : file.basename;
+        navigator.clipboard.writeText(`\`\`\`audioloop\n${ref}\n\`\`\``);
+        new Notice('Codeblock copied');
+      };
+    }
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
 // ─── Sidebar View ─────────────────────────────────────────────────────────────
 // Persistent ItemView rendered in the right panel. Survives note navigation
 // because Obsidian only unmounts it when the leaf is explicitly closed.
@@ -143,23 +237,22 @@ class AudioSidebarView extends ItemView {
       this.plugin.app.setting.open();
       this.plugin.app.setting.openTabById('audio-sidebar');
     };
-    const sfxRow = toolbar.createEl('div', { cls: 'audio-sb-sfx-row' });
-    const sfxBtn = sfxRow.createEl('button', { text: 'Play sound effect', cls: 'audio-sb-load-btn audio-sb-sfx-btn' });
-    sfxBtn.onclick = () => this.plugin.openSfxPicker();
-    const stopSfxBtn = sfxRow.createEl('button', { text: 'Stop sound effects', cls: 'audio-sb-load-btn audio-sb-sfx-btn' });
-    stopSfxBtn.onclick = () => this.plugin.stopAllSfx();
+
     this.renderVolumeControls(toolbar);
+
+    const sfxRow = toolbar.createEl('div', { cls: 'audio-sb-sfx-row' });
+    const sfxBtn = sfxRow.createEl('button', { text: 'Play sound', cls: 'audio-sb-load-btn audio-sb-sfx-btn' });
+    sfxBtn.onclick = () => this.plugin.openSfxPicker();
+    const loopBtn = sfxRow.createEl('button', { text: 'Play loop', cls: 'audio-sb-load-btn audio-sb-sfx-btn' });
+    loopBtn.onclick = () => this.plugin.openLoopPicker();
 
     this._bodyEl = content.createEl('div', { cls: 'audio-sb-body' });
     this._footerEl = content.createEl('div', { cls: 'audio-sb-footer' });
-    this._footerLabelEl = this._footerEl.createEl('div', { text: 'Now playing', cls: 'audio-sb-footer-label' });
-    this._footerTrackEl = this._footerEl.createEl('div', { text: 'Nothing playing', cls: 'audio-sb-footer-track' });
-    this._footerMetaEl = this._footerEl.createEl('div', { text: '', cls: 'audio-sb-footer-meta' });
-    this._footerControlsEl = this._footerEl.createEl('div', { cls: 'audio-sb-footer-controls' });
-    this._footerPlayBtn = this._footerControlsEl.createEl('button', { text: 'Play', cls: 'audio-sb-footer-btn', type: 'button' });
-    this._footerStopBtn = this._footerControlsEl.createEl('button', { text: 'Stop', cls: 'audio-sb-footer-btn', type: 'button' });
-    this._footerPlayBtn.onclick = () => this.toggleCurrentTrack();
-    this._footerStopBtn.onclick = () => this.stopCurrentTrack();
+    this._footerEl.createEl('div', { text: 'Now playing', cls: 'audio-sb-footer-label' });
+    this._nowPlayingListEl = this._footerEl.createEl('div', { cls: 'audio-sb-np-list' });
+
+    if (this._nowPlayingTimer) window.clearInterval(this._nowPlayingTimer);
+    this._nowPlayingTimer = window.setInterval(() => this._refreshNowPlayingTimes(), 500);
 
     this._loopBtn = null;
     this._currentAudio = null;
@@ -212,12 +305,14 @@ class AudioSidebarView extends ItemView {
     this._masterVolumeInput = this.createVolumeControl(volumeRow, 'Master', 'masterVolume');
     this._musicVolumeInput = this.createVolumeControl(volumeRow, 'Music', 'musicVolume');
     this._sfxVolumeInput = this.createVolumeControl(volumeRow, 'SFX', 'sfxVolume');
+    this._loopVolumeInput = this.createVolumeControl(volumeRow, 'Loop', 'loopVolume');
   }
 
   createVolumeControl(parentEl, label, settingKey) {
     const wrap = parentEl.createEl('label', { cls: 'audio-sb-volume-control' });
-    wrap.createEl('span', { text: label, cls: 'audio-sb-volume-label' });
-    const valueEl = wrap.createEl('span', {
+    const headerRow = wrap.createEl('div', { cls: 'audio-sb-volume-header' });
+    headerRow.createEl('span', { text: label, cls: 'audio-sb-volume-label' });
+    const valueEl = headerRow.createEl('span', {
       text: `${this.plugin.settings[settingKey]}%`,
       cls: 'audio-sb-volume-value'
     });
@@ -243,7 +338,8 @@ class AudioSidebarView extends ItemView {
     const controls = [
       [this._masterVolumeInput, this.plugin.settings.masterVolume],
       [this._musicVolumeInput, this.plugin.settings.musicVolume],
-      [this._sfxVolumeInput, this.plugin.settings.sfxVolume]
+      [this._sfxVolumeInput, this.plugin.settings.sfxVolume],
+      [this._loopVolumeInput, this.plugin.settings.loopVolume]
     ];
 
     for (const [input, value] of controls) {
@@ -270,6 +366,30 @@ class AudioSidebarView extends ItemView {
     }
 
     this.updateNowPlaying();
+  }
+
+  fadeOutAllTracks(clearSelection = true) {
+    const activeAudios = this.getTrackAudios().filter(audio => !audio.paused && !audio.ended);
+    if (activeAudios.length === 0) {
+      if (clearSelection) {
+        this._currentAudio = null;
+        this._currentTrackName = '';
+      } else {
+        this.syncCurrentAudio();
+      }
+      this.updateNowPlaying();
+      return Promise.resolve();
+    }
+
+    return Promise.all(activeAudios.map(audio => this.fadeOutAndStop(audio))).then(() => {
+      if (clearSelection) {
+        this._currentAudio = null;
+        this._currentTrackName = '';
+      } else {
+        this.syncCurrentAudio();
+      }
+      this.updateNowPlaying();
+    });
   }
 
   // Determines the active track by picking the most recently started playing
@@ -392,8 +512,10 @@ class AudioSidebarView extends ItemView {
       this.applyAudioVolume(audio);
       if (this._currentAudio === audio) {
         this.syncCurrentAudio();
-        this.updateNowPlaying();
       }
+      // Always refresh now playing — the faded track must leave the list even
+      // when _currentAudio has already moved to a newer track.
+      this.updateNowPlaying();
     });
   }
 
@@ -509,22 +631,95 @@ class AudioSidebarView extends ItemView {
   }
 
   updateNowPlaying() {
-    if (!this._footerTrackEl) return;
-    this._footerTrackEl.textContent = this._currentTrackName || 'Nothing playing';
-    if (this._footerMetaEl) {
-      this._footerMetaEl.textContent = this._currentAudio ? this.formatDuration(this._currentAudio.duration) : '';
+    if (!this._nowPlayingListEl) return;
+    this._nowPlayingListEl.empty();
+    this._npTimeEls = new Map();
+
+    const playingMusic = this.getTrackAudios().filter(a => !a.paused && !a.ended);
+    const playingLoops = Array.from(this.plugin._activeLoops.values());
+    const playingSfx = Array.from(this.plugin._activeSfx).filter(a => !a.ended);
+
+    if (playingMusic.length === 0 && playingLoops.length === 0 && playingSfx.length === 0) {
+      this._nowPlayingListEl.createEl('div', { text: 'Nothing playing', cls: 'audio-sb-np-empty' });
+      return;
     }
-    this._footerEl.classList.toggle('audio-sb-footer-active', !!this._currentTrackName);
-    const hasTrack = !!this._currentAudio;
-    const isPlaying = hasTrack && !this._currentAudio.paused && !this._currentAudio.ended;
-    this._footerEl.classList.toggle('audio-sb-footer-playing', isPlaying);
-    if (this._footerPlayBtn) {
-      this._footerPlayBtn.disabled = !hasTrack;
-      this._footerPlayBtn.textContent = isPlaying ? 'Pause' : 'Play';
+
+    for (const audio of playingMusic) {
+      this._addNowPlayingRow(audio, 'music', audio.dataset.trackName || '?');
     }
-    if (this._footerStopBtn) {
-      this._footerStopBtn.disabled = !hasTrack;
+    for (const audio of playingLoops) {
+      this._addNowPlayingRow(audio, 'loop', audio.dataset.loopName || '?');
     }
+    for (const audio of playingSfx) {
+      this._addNowPlayingRow(audio, 'sfx', audio.dataset.sfxName || '?');
+    }
+  }
+
+  _addNowPlayingRow(audio, type, name) {
+    const row = this._nowPlayingListEl.createEl('div', { cls: `audio-sb-np-row audio-sb-np-${type}` });
+
+    const timeEl = row.createEl('span', {
+      text: this.formatTime(audio.currentTime),
+      cls: 'audio-sb-np-time'
+    });
+    this._npTimeEls.set(audio, timeEl);
+
+    row.createEl('span', { text: name, cls: 'audio-sb-np-name' });
+
+    const controls = row.createEl('div', { cls: 'audio-sb-np-controls' });
+
+    if (type !== 'sfx') {
+      const isPlaying = !audio.paused;
+      const playBtn = controls.createEl('button', {
+        cls: 'audio-sb-np-btn',
+        type: 'button',
+        attr: { 'aria-label': isPlaying ? 'Pause' : 'Play' }
+      });
+      setIcon(playBtn, isPlaying ? 'pause' : 'play');
+      playBtn.onclick = () => {
+        if (type === 'music') {
+          if (audio.paused) this.fadeInTrack(audio).catch(() => {});
+          else this.fadeOutAndStop(audio, { resetTime: false });
+        } else {
+          if (audio.paused) audio.play().catch(() => {});
+          else audio.pause();
+        }
+        this.updateNowPlaying();
+      };
+    }
+
+    const stopBtn = controls.createEl('button', {
+      cls: 'audio-sb-np-btn',
+      type: 'button',
+      attr: { 'aria-label': 'Stop' }
+    });
+    setIcon(stopBtn, 'square');
+    stopBtn.onclick = () => {
+      if (type === 'music') {
+        this.fadeOutAndStop(audio);
+      } else if (type === 'loop') {
+        const path = audio.dataset.loopPath;
+        if (path) this.plugin.stopLoopByPath(path);
+      } else {
+        audio.pause();
+        audio.currentTime = 0;
+        this.plugin._activeSfx.delete(audio);
+        this.plugin.refreshNowPlaying();
+      }
+    };
+  }
+
+  _refreshNowPlayingTimes() {
+    if (!this._npTimeEls) return;
+    for (const [audio, timeEl] of this._npTimeEls) {
+      timeEl.textContent = this.formatTime(audio.currentTime);
+    }
+  }
+
+  formatTime(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+    const total = Math.floor(seconds);
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
   }
 
   formatDuration(durationSeconds) {
@@ -592,6 +787,10 @@ class AudioSidebarView extends ItemView {
   }
 
   async onClose() {
+    if (this._nowPlayingTimer) {
+      window.clearInterval(this._nowPlayingTimer);
+      this._nowPlayingTimer = null;
+    }
     this.stopAllTracks();
   }
 }
@@ -660,6 +859,20 @@ class AudioSidebarSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName('Loops folder')
+      .setDesc('Vault-relative folder path used by the looping ambient sound picker.')
+      .addText(text => {
+        text
+          .setPlaceholder('Loops')
+          .setValue(this.plugin.settings.loopFolderPath)
+          .onChange(async (value) => {
+            this.plugin.settings.loopFolderPath = value.trim();
+            await this.plugin.saveSettings();
+          });
+        text.inputEl.addClass('audio-sb-settings-input');
+      });
+
+    new Setting(containerEl)
       .setName('Allow music overlap')
       .setDesc('Let multiple music tracks play at once so you can transition between them manually.')
       .addToggle(toggle => toggle
@@ -672,7 +885,7 @@ class AudioSidebarSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Master volume')
-      .setDesc('Overall volume applied to both music and sound effects.')
+      .setDesc('Overall volume applied to music, sound effects, and loops.')
       .addSlider(slider => slider
         .setLimits(0, 100, 1)
         .setValue(this.plugin.settings.masterVolume)
@@ -704,6 +917,17 @@ class AudioSidebarSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName('Loop volume')
+      .setDesc('Category volume for looping ambient sound effects.')
+      .addSlider(slider => slider
+        .setLimits(0, 100, 1)
+        .setValue(this.plugin.settings.loopVolume)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          await this.plugin.updateVolumeSetting('loopVolume', value);
+        }));
+
+    new Setting(containerEl)
       .setName('Music fade duration')
       .setDesc('Fade in and fade out duration in milliseconds. Used for manual stops and automatic crossfades.')
       .addSlider(slider => slider
@@ -713,6 +937,14 @@ class AudioSidebarSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           await this.plugin.updateFadeSetting(value);
         }));
+
+    const footerEl = containerEl.createEl('div', { cls: 'audio-sb-settings-footer' });
+    footerEl.createEl('span', { text: 'Made by Patriek Jeuriens' });
+    footerEl.createEl('a', {
+      text: 'View on Obsidian Community',
+      href: 'https://community.obsidian.md/plugins/audio-sidebar',
+      attr: { target: '_blank', rel: 'noopener noreferrer' },
+    });
   }
 }
 
@@ -738,8 +970,11 @@ class AudioSidebarPlugin extends Plugin {
   // Returns a 0–1 multiplier combining master and category volumes.
   getEffectiveVolume(category) {
     const master = this.clampVolume(this.settings.masterVolume) / 100;
-    const categoryVolume = this.clampVolume(category === 'sfx' ? this.settings.sfxVolume : this.settings.musicVolume) / 100;
-    return master * categoryVolume;
+    let categoryValue;
+    if (category === 'sfx') categoryValue = this.settings.sfxVolume;
+    else if (category === 'loop') categoryValue = this.settings.loopVolume;
+    else categoryValue = this.settings.musicVolume;
+    return master * (this.clampVolume(categoryValue) / 100);
   }
 
   // Updates the in-memory setting and refreshes all live audio without saving,
@@ -748,6 +983,7 @@ class AudioSidebarPlugin extends Plugin {
     this.settings[key] = this.clampVolume(value);
     this.refreshAllViews();
     this.refreshActiveSfxVolumes();
+    this.refreshActiveLoopVolumes();
   }
 
   async updateVolumeSetting(key, value) {
@@ -772,6 +1008,10 @@ class AudioSidebarPlugin extends Plugin {
 
   getSfxFolder() {
     return this.getFolderByPath(this.settings.sfxFolderPath);
+  }
+
+  getLoopFolder() {
+    return this.getFolderByPath(this.settings.loopFolderPath);
   }
 
   getAudioFileByPath(path) {
@@ -817,6 +1057,39 @@ class AudioSidebarPlugin extends Plugin {
     ) || null;
   }
 
+  // Same resolution logic as resolveSfxFile but falls back to the loop folder.
+  resolveLoopFile(source) {
+    const normalized = source.trim();
+    if (!normalized) return null;
+
+    const directFile = this.getAudioFileByPath(normalized);
+    if (directFile) return directFile;
+
+    const hashIdx = normalized.indexOf('#');
+    if (hashIdx !== -1) {
+      const folderPath = normalized.slice(0, hashIdx).trim();
+      const filename = normalized.slice(hashIdx + 1).trim();
+      const folder = this.getFolderByPath(folderPath);
+      if (folder && filename) {
+        const lookup = filename.toLowerCase();
+        const found = this.findAudioInFolder(folder).find(file =>
+          file.basename.toLowerCase() === lookup ||
+          `${file.basename}.${file.extension}`.toLowerCase() === lookup
+        );
+        if (found) return found;
+      }
+    }
+
+    const loopFolder = this.getLoopFolder();
+    if (!loopFolder) return null;
+
+    const lookup = normalized.toLowerCase();
+    return this.findAudioInFolder(loopFolder).find(file =>
+      file.basename.toLowerCase() === lookup ||
+      `${file.basename}.${file.extension}`.toLowerCase() === lookup
+    ) || null;
+  }
+
   findAudioInFolder(folder) {
     return folder.children
       .filter(f => f instanceof TFile && AUDIO_EXTENSIONS.includes(f.extension.toLowerCase()))
@@ -843,6 +1116,26 @@ class AudioSidebarPlugin extends Plugin {
     new AudioSfxModal(this.app, this, files).open();
   }
 
+  openLoopPicker() {
+    const folder = this.getLoopFolder();
+    if (!folder) {
+      if (this.settings.loopFolderPath) {
+        new Notice(`Audio Sidebar loop folder not found: ${this.settings.loopFolderPath}`);
+      } else {
+        new Notice('Set a loop folder in Audio Sidebar settings first.');
+      }
+      return;
+    }
+
+    const files = this.findAudioInFolder(folder);
+    if (files.length === 0) {
+      new Notice(`No audio files found in ${folder.path}`);
+      return;
+    }
+
+    new AudioLoopModal(this.app, this, files).open();
+  }
+
   // Creates a detached Audio element so SFX plays independently of the
   // sidebar track list. Active instances are tracked in _activeSfx so they
   // can be stopped and have their volume updated as a group.
@@ -850,8 +1143,10 @@ class AudioSidebarPlugin extends Plugin {
     const audio = new Audio(this.app.vault.getResourcePath(file));
     audio.loop = false;
     audio.volume = this.getEffectiveVolume('sfx');
+    audio.dataset.sfxName = file.basename;
     audio.addEventListener('ended', () => {
       this._activeSfx.delete(audio);
+      this.refreshNowPlaying();
     });
     audio.addEventListener('pause', () => {
       if (audio.ended) this._activeSfx.delete(audio);
@@ -861,6 +1156,7 @@ class AudioSidebarPlugin extends Plugin {
       this._activeSfx.delete(audio);
       new Notice(`Could not play ${file.basename}`);
     });
+    this.refreshNowPlaying();
   }
 
   stopAllSfx() {
@@ -869,6 +1165,7 @@ class AudioSidebarPlugin extends Plugin {
       audio.currentTime = 0;
     });
     this._activeSfx.clear();
+    this.refreshNowPlaying();
   }
 
   refreshActiveSfxVolumes() {
@@ -878,6 +1175,100 @@ class AudioSidebarPlugin extends Plugin {
     });
   }
 
+  // Starts a looping Audio element for the given file. Keyed by file.path so
+  // the same loop can't be started twice, and can be stopped individually.
+  playLoop(file) {
+    if (this._activeLoops.has(file.path)) return;
+    const audio = new Audio(this.app.vault.getResourcePath(file));
+    audio.loop = true;
+    audio.volume = 0;
+    audio.dataset.loopFadeLevel = '0';
+    audio.dataset.loopName = file.basename;
+    audio.dataset.loopPath = file.path;
+    audio.addEventListener('ended', () => {
+      this._activeLoops.delete(file.path);
+      this.refreshNowPlaying();
+    });
+    this._activeLoops.set(file.path, audio);
+    audio.play().then(() => {
+      this._startLoopFade(audio, 1, this.settings.musicFadeMs);
+    }).catch(() => {
+      this._activeLoops.delete(file.path);
+      new Notice(`Could not play ${file.basename}`);
+      this.refreshNowPlaying();
+    });
+    this.refreshNowPlaying();
+  }
+
+  stopLoop(file) {
+    this.stopLoopByPath(file.path);
+  }
+
+  stopLoopByPath(path) {
+    const audio = this._activeLoops.get(path);
+    if (!audio) return;
+    this._activeLoops.delete(path);
+    this.refreshNowPlaying();
+    this._startLoopFade(audio, 0, this.settings.musicFadeMs).then(() => {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.dataset.loopFadeLevel = '1';
+    });
+  }
+
+  stopAllLoops() {
+    const audios = Array.from(this._activeLoops.values());
+    this._activeLoops.clear();
+    this.refreshNowPlaying();
+    for (const audio of audios) {
+      this._startLoopFade(audio, 0, this.settings.musicFadeMs).then(() => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
+    }
+  }
+
+  _applyLoopVolume(audio) {
+    const fadeLevel = Number(audio.dataset.loopFadeLevel || 1);
+    audio.volume = this.getEffectiveVolume('loop') * fadeLevel;
+  }
+
+  _startLoopFade(audio, targetFadeLevel, durationMs) {
+    return new Promise(resolve => {
+      if (audio._loopFadeInterval) {
+        window.clearInterval(audio._loopFadeInterval);
+        audio._loopFadeInterval = null;
+      }
+      const duration = this.clampFadeMs(durationMs);
+      const startLevel = Number(audio.dataset.loopFadeLevel || 1);
+      const target = Math.max(0, Math.min(1, targetFadeLevel));
+
+      if (duration <= 0 || Math.abs(startLevel - target) < 0.01) {
+        audio.dataset.loopFadeLevel = String(target);
+        this._applyLoopVolume(audio);
+        resolve();
+        return;
+      }
+
+      const startedAt = Date.now();
+      audio._loopFadeInterval = window.setInterval(() => {
+        const elapsed = Date.now() - startedAt;
+        const progress = Math.min(elapsed / duration, 1);
+        audio.dataset.loopFadeLevel = String(startLevel + (target - startLevel) * progress);
+        this._applyLoopVolume(audio);
+        if (progress >= 1) {
+          window.clearInterval(audio._loopFadeInterval);
+          audio._loopFadeInterval = null;
+          resolve();
+        }
+      }, 50);
+    });
+  }
+
+  refreshActiveLoopVolumes() {
+    this._activeLoops.forEach(audio => this._applyLoopVolume(audio));
+  }
+
   async loadFolderIntoLeaves(folder) {
     this.selectedFolder = folder;
     await this.activateView();
@@ -885,6 +1276,15 @@ class AudioSidebarPlugin extends Plugin {
     for (const leaf of leaves) {
       if (leaf.view instanceof AudioSidebarView) {
         leaf.view.loadFolder(folder);
+      }
+    }
+  }
+
+  refreshNowPlaying() {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    for (const leaf of leaves) {
+      if (leaf.view instanceof AudioSidebarView) {
+        leaf.view.updateNowPlaying();
       }
     }
   }
@@ -899,6 +1299,24 @@ class AudioSidebarPlugin extends Plugin {
         leaf.view.updateOverlapButton();
       }
     }
+  }
+
+  fadeOutAllAudio() {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    const trackFadePromises = [];
+
+    for (const leaf of leaves) {
+      if (leaf.view instanceof AudioSidebarView) {
+        trackFadePromises.push(leaf.view.fadeOutAllTracks());
+      }
+    }
+
+    const loopFadePromise = Promise.resolve(this.stopAllLoops());
+    this.stopAllSfx();
+
+    return Promise.all([...trackFadePromises, loopFadePromise]).then(() => {
+      this.refreshNowPlaying();
+    });
   }
 
   async loadDefaultFolderIntoView() {
@@ -917,6 +1335,7 @@ class AudioSidebarPlugin extends Plugin {
     await this.loadSettings();
     this.selectedFolder = null;
     this._activeSfx = new Set();
+    this._activeLoops = new Map();
     this.registerView(VIEW_TYPE, (leaf) => new AudioSidebarView(leaf, this));
     this.addSettingTab(new AudioSidebarSettingTab(this.app, this));
     this.addRibbonIcon('music', 'Audio Sidebar', () => this.activateView());
@@ -938,11 +1357,20 @@ class AudioSidebarPlugin extends Plugin {
             navigator.clipboard.writeText(code);
           })
         );
+        menu.addItem(item => item
+          .setTitle('Copy fade-out-all codeblock')
+          .setIcon('square')
+          .onClick(() => {
+            const code = `\`\`\`audiofadeoutall\nFade out all audio\n\`\`\``;
+            navigator.clipboard.writeText(code);
+            new Notice('Codeblock copied');
+          })
+        );
       })
     );
 
     // File explorer context menu: audio files get an "Audio" submenu with
-    // codeblock options for both the music sidebar and one-shot SFX.
+    // codeblock options for the music sidebar, one-shot SFX, and loops.
     this.registerEvent(
       this.app.workspace.on('file-menu', (menu, file) => {
         if (!(file instanceof TFile)) return;
@@ -967,6 +1395,27 @@ class AudioSidebarPlugin extends Plugin {
               const folderPath = parent && parent.path !== '/' ? parent.path : null;
               const ref = folderPath ? `${folderPath}#${file.basename}` : file.basename;
               const code = `\`\`\`audiosfx\n${ref}\n\`\`\``;
+              navigator.clipboard.writeText(code);
+              new Notice('Codeblock copied');
+            })
+          );
+          submenu.addItem(sub => sub
+            .setTitle('Copy loop codeblock')
+            .setIcon('copy')
+            .onClick(() => {
+              const parent = file.parent;
+              const folderPath = parent && parent.path !== '/' ? parent.path : null;
+              const ref = folderPath ? `${folderPath}#${file.basename}` : file.basename;
+              const code = `\`\`\`audioloop\n${ref}\n\`\`\``;
+              navigator.clipboard.writeText(code);
+              new Notice('Codeblock copied');
+            })
+          );
+          submenu.addItem(sub => sub
+            .setTitle('Copy fade-out-all codeblock')
+            .setIcon('square')
+            .onClick(() => {
+              const code = `\`\`\`audiofadeoutall\nFade out all audio\n\`\`\``;
               navigator.clipboard.writeText(code);
               new Notice('Codeblock copied');
             })
@@ -1033,6 +1482,60 @@ class AudioSidebarPlugin extends Plugin {
       btn.onclick = () => this.playSfx(file);
     });
 
+    // Clicking the button toggles the loop on/off. The icon updates to reflect
+    // the current state so you can tell at a glance whether it's running.
+    this.registerMarkdownCodeBlockProcessor('audioloop', (source, el) => {
+      const fileSource = source.trim();
+      const file = this.resolveLoopFile(fileSource);
+
+      const btn = el.createEl('button', { cls: 'audio-sb-codeblock-btn' });
+      const iconEl = btn.createEl('span', { text: '↻', cls: 'audio-sb-codeblock-icon' });
+      const labelEl = btn.createEl('span', { cls: 'audio-sb-codeblock-label' });
+      labelEl.createEl('span', {
+        text: file ? file.basename : fileSource,
+        cls: 'audio-sb-codeblock-folder'
+      });
+
+      if (!file) {
+        btn.createEl('span', { text: 'Sound not found', cls: 'audio-sb-codeblock-error' });
+        btn.disabled = true;
+        return;
+      }
+
+      const updateState = () => {
+        const active = this._activeLoops.has(file.path);
+        iconEl.textContent = active ? '◼' : '↻';
+        btn.classList.toggle('audio-sb-codeblock-loop-active', active);
+      };
+
+      btn.onclick = () => {
+        if (this._activeLoops.has(file.path)) {
+          this.stopLoop(file);
+        } else {
+          this.playLoop(file);
+        }
+        updateState();
+      };
+    });
+
+    this.registerMarkdownCodeBlockProcessor('audiofadeoutall', (source, el) => {
+      const label = source.trim() || 'Fade out all audio';
+      const btn = el.createEl('button', {
+        cls: 'audio-sb-codeblock-btn audio-sb-codeblock-fadeall-btn'
+      });
+      const iconEl = btn.createEl('span', { cls: 'audio-sb-codeblock-icon' });
+      setIcon(iconEl, 'square');
+      const labelEl = btn.createEl('span', { cls: 'audio-sb-codeblock-label' });
+      labelEl.createEl('span', {
+        text: label,
+        cls: 'audio-sb-codeblock-folder'
+      });
+
+      btn.onclick = () => {
+        this.fadeOutAllAudio();
+      };
+    });
+
     this.addCommand({
       id: 'load-current-folder',
       name: 'Load audio from current note\'s folder',
@@ -1048,6 +1551,24 @@ class AudioSidebarPlugin extends Plugin {
       id: 'open-sfx-picker',
       name: 'Open sound effects picker',
       callback: () => this.openSfxPicker()
+    });
+
+    this.addCommand({
+      id: 'open-loop-picker',
+      name: 'Open loop picker',
+      callback: () => this.openLoopPicker()
+    });
+
+    this.addCommand({
+      id: 'stop-all-loops',
+      name: 'Stop all loops',
+      callback: () => this.stopAllLoops()
+    });
+
+    this.addCommand({
+      id: 'fade-out-all-audio',
+      name: 'Fade out all audio',
+      callback: () => this.fadeOutAllAudio()
     });
   }
 
@@ -1085,6 +1606,7 @@ class AudioSidebarPlugin extends Plugin {
 
   onunload() {
     this.stopAllSfx();
+    this.stopAllLoops();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
   }
 }
