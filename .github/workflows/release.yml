@@ -1,21 +1,44 @@
 name: Release Obsidian plugin
+
 on:
   push:
     tags:
       - "*"
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Optional build step
+      # - name: Build plugin
+      #   run: |
+      #     npm install
+      #     npm run build
 
       - name: Create Release
-        uses: ncipollo/release-action@v1
+        uses: softprops/action-gh-release@v2
         with:
-          allowUpdates: true
-          # List the specific files Obsidian needs
-          artifacts: "main.js,manifest.json,styles.css,Readme.MD,LICENSE" 
-          token: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: true
+          files: |
+            main.js
+            manifest.json
+            styles.css
+            README.md
+            LICENSE
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
