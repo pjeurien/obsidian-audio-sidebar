@@ -1,98 +1,97 @@
 # Audio Sidebar
 
-An Obsidian plugin that provides a persistent audio player in the right sidebar, unaffected by note navigation or scrolling.
+Custom Obsidian plugin for managing music, one-shot sound effects, looping ambience, and note-embedded audio controls.
 
 ## Features
 
-- Load all audio files from any vault folder into the sidebar
-- Set a default vault folder in plugin settings and load it automatically
-- Open a searchable one-shot SFX picker from the sidebar or command palette
-- Audio keeps playing no matter which note you open or how far you scroll
-- Single-track playback by default, with optional overlap for manual transitions
-- Optional music overlap toggle for manual transitions between tracks
-- Separate master, music, and SFX volume controls
-- Music fade in, fade out, and automatic crossfade between tracks
-- Loop toggle
-- Real-time search to filter tracks by name
-- Tracks sorted alphabetically
-- Embed a clickable button in any note to load a folder and optionally auto-play a track
-- Embed a clickable button in any note to play a one-shot sound effect
+- Persistent right-sidebar audio player for folder-based music playback
+- Optional music overlap for manual transitions
+- Fade-aware track stopping and crossfading
+- Searchable sound-effects picker
+- Searchable loop picker for ambient audio
+- Markdown codeblocks for note-embedded audio controls
+- File-explorer context menu entries to copy ready-to-paste codeblocks
 
-## Supported formats
+## Supported Codeblocks
 
-`mp3` · `wav` · `ogg` · `flac` · `m4a` · `webm` · `aac`
+### Music sidebar loader
 
-## Usage
+Loads a folder into the audio sidebar. Optionally auto-plays a specific track by basename.
 
-### Sidebar
-
-Optional: set a default folder under **Settings → Community Plugins → Audio Sidebar**. Use a vault-relative path such as `Music/Ambient`.
-Optional: set a separate **Sound effects folder** there as well, for example `SFX`.
-Optional: enable **Allow music overlap** there if you want multiple music tracks to keep playing during transitions.
-Optional: set **Master volume**, **Music volume**, and **Sound effects volume** there, or adjust them live from the sidebar toolbar.
-Optional: set **Music fade duration** to control fade-ins, fade-outs, and crossfades between music tracks.
-
-1. Click a folder in the file explorer (this selects it silently)
-2. Click **Load from selected folder** in the Audio Sidebar
-3. Press play on any track
-
-The sidebar will not change or clear when you switch notes or tabs. Click the button again to load a different folder.
-Use the **Overlap** toggle in the track list header to switch between single-track playback and layered music playback.
-When overlap is off, starting a new track crossfades from the current track into the new one using the configured fade duration.
-
-Use **Play sound effect** in the sidebar toolbar to open a searchable picker. Choosing a result plays it once without changing the current music list. Each entry has a small copy button on the right — clicking it copies a ready-to-paste `audiosfx` codeblock to your clipboard.
-
-### Codeblock
-
-Embed a button in any note that loads a folder when clicked:
-
-````
+````md
 ```audiosidebar
-Music/Ambient
+Session Information/Campaigns/The Ballad of the Corpse Dancer/Audio
 ```
 ````
 
-To also auto-play a specific track when clicked, add `#trackname`:
-
-````
+````md
 ```audiosidebar
-Music/Ambient#Rainy Tavern
+Session Information/Campaigns/The Ballad of the Corpse Dancer/Audio#The Ballad of the Corpse Dancer
 ```
 ````
 
-The track name is matched by partial, case-insensitive search — `#Tavern` will match `Rainy Tavern.mp3`. The button displays the folder name and track name as a label.
+### One-shot sound effect
 
-To play a one-shot sound effect directly from a note, use `audiosfx`:
+Plays a single sound effect immediately.
 
-````
+````md
 ```audiosfx
-SFX/Doors#Creaking Door
+SFX#Door Slam
 ```
 ````
 
-The content is `folder/path#filename` — the part before `#` is the vault-relative folder path, and the part after is the file's basename (without extension). This plays the effect once and does not loop.
+### Looping ambience
 
-If you have set a **Sound effects folder** in plugin settings, you can also use just the basename and the plugin will search that folder automatically:
+Toggles a looping ambient sound on or off.
 
-````
-```audiosfx
-Creaking Door
+````md
+```audioloop
+Loops#Rain Interior
 ```
 ````
 
-The easiest way to get the correct syntax is to open the SFX picker and click the copy button next to any sound — it copies a ready-to-paste codeblock for that file.
+### Fade out all audio
 
-### Command
+Fades out all active sidebar music and loops, and stops active SFX. This is intended for direct use inside notes as a scene-control button.
 
-The command **Audio Sidebar: Load audio from current note's folder** is available in the command palette and can be bound to a hotkey. It opens the sidebar and loads the folder of whichever note is currently active.
+````md
+```audiofadeoutall
+Fade out all audio
+```
+````
 
-The command **Audio Sidebar: Open sound effects picker** opens the same one-shot SFX search modal without needing the sidebar button.
+The label is optional. If omitted, the button defaults to `Fade out all audio`.
 
-## Installation
+## Right-Click Menu Support
 
-Copy the plugin folder into your vault's `.obsidian/plugins/` directory and enable it under Settings → Community Plugins.
+### Folders
 
-## Author
+Right-clicking a folder in the file explorer provides:
 
-Patriek Jeuriens
-GitHub: https://github.com/pjeurien/obsidian-audio-sidebar
+- `Add to note as Audio Sidebar`
+- `Copy fade-out-all codeblock`
+
+### Audio files
+
+Right-clicking an audio file opens an `Audio` submenu with:
+
+- `Copy track codeblock`
+- `Copy SFX codeblock`
+- `Copy loop codeblock`
+- `Copy fade-out-all codeblock`
+
+## Commands
+
+- `Load audio from current note's folder`
+- `Open sound effects picker`
+- `Open loop picker`
+- `Stop all loops`
+- `Fade out all audio`
+
+## Notes
+
+- `audiosidebar` uses the sidebar view and can auto-play a track after loading a folder.
+- `audiosfx` plays detached one-shot audio and does not require the sidebar to stay focused.
+- `audioloop` tracks active loops by file path so the same loop cannot be started twice.
+- `audiofadeoutall` uses the plugin's fade-aware stop path for music and loops.
+
