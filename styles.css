@@ -410,6 +410,7 @@ body .audio-sb-codeblock-btn:focus {
   background: transparent;
   color: var(--text-normal);
   font-size: 1em;
+  margin-bottom: 8px;
 }
 
 .audio-sb-sfx-search:focus {

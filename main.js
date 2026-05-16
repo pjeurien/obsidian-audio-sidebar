@@ -701,10 +701,7 @@ class AudioSidebarView extends ItemView {
         const path = audio.dataset.loopPath;
         if (path) this.plugin.stopLoopByPath(path);
       } else {
-        audio.pause();
-        audio.currentTime = 0;
-        this.plugin._activeSfx.delete(audio);
-        this.plugin.refreshNowPlaying();
+        this.plugin.fadeSfxOut(audio);
       }
     };
   }
@@ -1157,6 +1154,25 @@ class AudioSidebarPlugin extends Plugin {
       new Notice(`Could not play ${file.basename}`);
     });
     this.refreshNowPlaying();
+  }
+
+  fadeSfxOut(audio, durationMs = 500) {
+    if (!audio || audio.paused || audio.ended) return;
+    const startVolume = audio.volume;
+    const interval = 50;
+    const steps = Math.max(1, Math.round(durationMs / interval));
+    let step = 0;
+    const id = window.setInterval(() => {
+      step++;
+      audio.volume = Math.max(0, startVolume * (1 - step / steps));
+      if (step >= steps) {
+        window.clearInterval(id);
+        audio.pause();
+        audio.currentTime = 0;
+        this._activeSfx.delete(audio);
+        this.refreshNowPlaying();
+      }
+    }, interval);
   }
 
   stopAllSfx() {
