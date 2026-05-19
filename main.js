@@ -6,6 +6,7 @@ const DEFAULT_SETTINGS = {
   defaultFolderPath: '',
   sfxFolderPath: '',
   loopFolderPath: '',
+  continuePlayback: false,
   allowMusicOverlap: false,
   masterVolume: 100,
   musicVolume: 100,
@@ -193,6 +194,249 @@ class AudioLoopModal extends Modal {
   }
 }
 
+// ─── Create Scene Modal ──────────────────────────────────────────────────────
+// Lets you pick one music track and any number of loops, then generates a
+// ready-to-paste audioscene codeblock that triggers the whole set at once.
+
+class CreateSceneModal extends Modal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+    this.sceneName = '';
+    this.selectedMusic = null;       // TFile | null
+    this.selectedLoops = new Map();  // Map<path, TFile>
+    this._musicFiles = [];
+    this._loopFiles = [];
+    this._filteredMusicFiles = [];
+    this._filteredLoopFiles = [];
+  }
+
+  onOpen() {
+    this.modalEl.addClass('audio-sb-scene-modal');
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('h2', { text: 'Create Scene', cls: 'audio-sb-scene-title' });
+
+    // Scene name
+    const nameRow = contentEl.createEl('div', { cls: 'audio-sb-scene-row' });
+    nameRow.createEl('label', { text: 'Scene name', cls: 'audio-sb-scene-label' });
+    const nameInput = nameRow.createEl('input', {
+      type: 'text',
+      cls: 'audio-sb-scene-name-input',
+      placeholder: 'e.g. Tavern Night'
+    });
+    nameInput.addEventListener('input', () => {
+      this.sceneName = nameInput.value;
+      this._updatePreview();
+    });
+
+    // Music section
+    contentEl.createEl('div', { text: 'Music track (optional — single select)', cls: 'audio-sb-scene-section-label' });
+    const musicSearchEl = contentEl.createEl('input', {
+      type: 'text',
+      cls: 'audio-sb-sfx-search audio-sb-scene-search',
+      placeholder: 'Search music...'
+    });
+    this._musicListEl = contentEl.createEl('div', { cls: 'audio-sb-sfx-list audio-sb-scene-list' });
+
+    this._loadMusicFiles();
+    this._renderMusicList();
+
+    musicSearchEl.addEventListener('input', () => {
+      const q = musicSearchEl.value.toLowerCase().trim();
+      this._filteredMusicFiles = this._musicFiles.filter(f =>
+        !q || f.basename.toLowerCase().includes(q)
+      );
+      this._renderMusicList();
+    });
+
+    // Loops section
+    contentEl.createEl('div', { text: 'Loops (multi-select)', cls: 'audio-sb-scene-section-label' });
+    const loopSearchEl = contentEl.createEl('input', {
+      type: 'text',
+      cls: 'audio-sb-sfx-search audio-sb-scene-search',
+      placeholder: 'Search loops...'
+    });
+    this._loopListEl = contentEl.createEl('div', { cls: 'audio-sb-sfx-list audio-sb-scene-list' });
+
+    this._loadLoopFiles();
+    this._renderLoopList();
+
+    loopSearchEl.addEventListener('input', () => {
+      const q = loopSearchEl.value.toLowerCase().trim();
+      this._filteredLoopFiles = this._loopFiles.filter(f =>
+        !q || f.basename.toLowerCase().includes(q)
+      );
+      this._renderLoopList();
+    });
+
+    // Codeblock preview
+    contentEl.createEl('div', { text: 'Generated codeblock', cls: 'audio-sb-scene-section-label' });
+    this._previewEl = contentEl.createEl('pre', { cls: 'audio-sb-scene-preview' });
+    this._codeEl = this._previewEl.createEl('code');
+
+    // Copy button
+    const actionsRow = contentEl.createEl('div', { cls: 'audio-sb-scene-actions' });
+    const copyBtn = actionsRow.createEl('button', {
+      text: 'Copy codeblock',
+      cls: 'audio-sb-load-btn'
+    });
+    copyBtn.onclick = () => {
+      const code = this._buildCodeblock();
+      if (!code) {
+        new Notice('Enter a scene name first.');
+        return;
+      }
+      navigator.clipboard.writeText(code);
+      new Notice('Scene codeblock copied!');
+    };
+
+    this._updatePreview();
+    nameInput.focus();
+  }
+
+  _loadMusicFiles() {
+    let folder = null;
+    const leaves = this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE);
+    for (const leaf of leaves) {
+      if (leaf.view instanceof AudioSidebarView && leaf.view._loadedFolder) {
+        folder = leaf.view._loadedFolder;
+        break;
+      }
+    }
+    if (!folder) folder = this.plugin.getDefaultFolder();
+    this._musicFolder = folder;
+    this._musicFiles = folder ? this.plugin.findAudioInFolder(folder) : [];
+    this._filteredMusicFiles = [...this._musicFiles];
+  }
+
+  _loadLoopFiles() {
+    const folder = this.plugin.getLoopFolder();
+    this._loopFiles = folder ? this.plugin.findAudioInFolder(folder) : [];
+    this._filteredLoopFiles = [...this._loopFiles];
+  }
+
+  _renderMusicList() {
+    const listEl = this._musicListEl;
+    listEl.empty();
+
+    if (this._musicFiles.length === 0) {
+      listEl.createEl('div', {
+        text: 'No music folder loaded. Load a folder in the sidebar first.',
+        cls: 'audio-sb-sfx-empty'
+      });
+      return;
+    }
+
+    // "No music" option
+    const noneRow = listEl.createEl('div', { cls: 'audio-sb-sfx-modal-row' });
+    const noneBtn = noneRow.createEl('button', {
+      cls: `audio-sb-sfx-item${!this.selectedMusic ? ' audio-sb-scene-selected' : ''}`,
+      type: 'button'
+    });
+    const noneIconEl = noneBtn.createEl('span', { cls: 'audio-sb-sfx-icon' });
+    setIcon(noneIconEl, !this.selectedMusic ? 'check' : 'minus');
+    noneBtn.createEl('div', { text: 'No music', cls: 'audio-sb-sfx-name' });
+    noneBtn.onclick = () => {
+      this.selectedMusic = null;
+      this._renderMusicList();
+      this._updatePreview();
+    };
+
+    if (this._filteredMusicFiles.length === 0) {
+      listEl.createEl('div', { text: 'No matching tracks.', cls: 'audio-sb-sfx-empty' });
+      return;
+    }
+
+    for (const file of this._filteredMusicFiles) {
+      const isSelected = this.selectedMusic?.path === file.path;
+      const rowEl = listEl.createEl('div', { cls: 'audio-sb-sfx-modal-row' });
+      const itemEl = rowEl.createEl('button', {
+        cls: `audio-sb-sfx-item${isSelected ? ' audio-sb-scene-selected' : ''}`,
+        type: 'button'
+      });
+      const iconEl = itemEl.createEl('span', { cls: 'audio-sb-sfx-icon' });
+      setIcon(iconEl, isSelected ? 'check' : 'music');
+      itemEl.createEl('div', { text: file.basename, cls: 'audio-sb-sfx-name' });
+      itemEl.onclick = () => {
+        this.selectedMusic = file;
+        this._renderMusicList();
+        this._updatePreview();
+      };
+    }
+  }
+
+  _renderLoopList() {
+    const listEl = this._loopListEl;
+    listEl.empty();
+
+    if (this._loopFiles.length === 0) {
+      listEl.createEl('div', {
+        text: 'No loop folder configured in settings.',
+        cls: 'audio-sb-sfx-empty'
+      });
+      return;
+    }
+
+    if (this._filteredLoopFiles.length === 0) {
+      listEl.createEl('div', { text: 'No matching loops.', cls: 'audio-sb-sfx-empty' });
+      return;
+    }
+
+    for (const file of this._filteredLoopFiles) {
+      const isSelected = this.selectedLoops.has(file.path);
+      const rowEl = listEl.createEl('div', { cls: 'audio-sb-sfx-modal-row' });
+      const itemEl = rowEl.createEl('button', {
+        cls: `audio-sb-sfx-item${isSelected ? ' audio-sb-scene-selected' : ''}`,
+        type: 'button'
+      });
+      const iconEl = itemEl.createEl('span', { cls: 'audio-sb-sfx-icon' });
+      setIcon(iconEl, isSelected ? 'check' : 'repeat-2');
+      itemEl.createEl('div', { text: file.basename, cls: 'audio-sb-sfx-name' });
+      itemEl.onclick = () => {
+        if (this.selectedLoops.has(file.path)) {
+          this.selectedLoops.delete(file.path);
+        } else {
+          this.selectedLoops.set(file.path, file);
+        }
+        this._renderLoopList();
+        this._updatePreview();
+      };
+    }
+  }
+
+  _buildCodeblock() {
+    const name = this.sceneName.trim();
+    if (!name) return '';
+    const lines = [`name: ${name}`];
+    if (this.selectedMusic) {
+      const folder = this.selectedMusic.parent;
+      const ref = folder && folder.path !== '/' ? `${folder.path}#${this.selectedMusic.basename}` : this.selectedMusic.basename;
+      lines.push(`music: ${ref}`);
+    }
+    for (const [, file] of this.selectedLoops) {
+      const folder = file.parent;
+      const ref = folder && folder.path !== '/' ? `${folder.path}#${file.basename}` : file.basename;
+      lines.push(`loop: ${ref}`);
+    }
+    return `\`\`\`audioscene\n${lines.join('\n')}\n\`\`\``;
+  }
+
+  _updatePreview() {
+    if (!this._codeEl) return;
+    if (!this.sceneName.trim()) {
+      this._codeEl.textContent = '(enter a scene name to generate the codeblock)';
+      return;
+    }
+    this._codeEl.textContent = this._buildCodeblock();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
 // ─── Sidebar View ─────────────────────────────────────────────────────────────
 // Persistent ItemView rendered in the right panel. Survives note navigation
 // because Obsidian only unmounts it when the leaf is explicitly closed.
@@ -227,6 +471,8 @@ class AudioSidebarView extends ItemView {
       const folder = this.plugin.selectedFolder;
       if (folder) this.loadFolder(folder);
     };
+    const sceneBtn = loadRow.createEl('button', { text: 'Create Scene', cls: 'audio-sb-load-btn audio-sb-scene-create-btn' });
+    sceneBtn.onclick = () => this.plugin.openSceneCreator();
     const cogBtn = loadRow.createEl('button', {
       cls: 'audio-sb-cog-btn',
       type: 'button',
@@ -279,17 +525,47 @@ class AudioSidebarView extends ItemView {
 
   updateLoopButton() {
     if (!this._loopBtn) return;
-    this._loopBtn.textContent = `⟳ Loop: ${this._looping ? 'On' : 'Off'}`;
+    this._loopBtn.textContent = `Loop: ${this._looping ? 'On' : 'Off'}`;
     this._loopBtn.title = this._looping ? 'Disable loop' : 'Enable loop';
   }
 
   updateOverlapButton() {
     if (!this._overlapBtn) return;
     const enabled = !!this.plugin.settings.allowMusicOverlap;
-    this._overlapBtn.textContent = `⇄ Overlap: ${enabled ? 'On' : 'Off'}`;
+    this._overlapBtn.textContent = `Overlap: ${enabled ? 'On' : 'Off'}`;
     this._overlapBtn.title = enabled ? 'Disable music overlap' : 'Enable music overlap';
     this._overlapBtn.classList.toggle('audio-sb-loop-on', enabled);
     this._overlapBtn.classList.toggle('audio-sb-loop-off', !enabled);
+  }
+
+  toggleContinue() {
+    this.plugin.settings.continuePlayback = !this.plugin.settings.continuePlayback;
+    this.plugin.saveSettings();
+    this.updateContinueButton();
+  }
+
+  updateContinueButton() {
+    if (!this._continueBtn) return;
+    const enabled = !!this.plugin.settings.continuePlayback;
+    this._continueBtn.textContent = `Continue: ${enabled ? 'On' : 'Off'}`;
+    this._continueBtn.title = enabled ? 'Disable continue playback' : 'Enable continue playback';
+    this._continueBtn.classList.toggle('audio-sb-loop-on', enabled);
+    this._continueBtn.classList.toggle('audio-sb-loop-off', !enabled);
+  }
+
+  playNextTrack(afterAudio) {
+    if (!this._trackList) return;
+    const visibleAudios = Array.from(this._trackList.querySelectorAll('.audio-sb-item'))
+      .filter(item => !item.classList.contains('audio-sb-hidden'))
+      .map(item => item.querySelector('audio'))
+      .filter(Boolean);
+    const idx = visibleAudios.indexOf(afterAudio);
+    if (idx === -1 || idx >= visibleAudios.length - 1) return;
+    const next = visibleAudios[idx + 1];
+    next.currentTime = 0;
+    this.fadeInTrack(next).catch(() => {
+      new Notice(`Could not play ${next.dataset.trackName || 'track'}`);
+    });
   }
 
   getTrackAudios() {
@@ -560,6 +836,11 @@ class AudioSidebarView extends ItemView {
     this._loopBtn = header.createEl('button', { cls: `audio-sb-loop-btn ${this._looping !== false ? 'audio-sb-loop-on' : 'audio-sb-loop-off'}` });
     this._loopBtn.onclick = () => this.toggleLoop();
     this.updateLoopButton();
+    this._continueBtn = header.createEl('button', {
+      cls: `audio-sb-loop-btn ${this.plugin.settings.continuePlayback ? 'audio-sb-loop-on' : 'audio-sb-loop-off'}`
+    });
+    this._continueBtn.onclick = () => this.toggleContinue();
+    this.updateContinueButton();
     this._overlapBtn = header.createEl('button', {
       cls: `audio-sb-loop-btn ${this.plugin.settings.allowMusicOverlap ? 'audio-sb-loop-on' : 'audio-sb-loop-off'}`
     });
@@ -611,7 +892,11 @@ class AudioSidebarView extends ItemView {
       });
       audio.addEventListener('ended', () => {
         if (this._currentAudio === audio) {
-          this.syncCurrentAudio();
+          if (this.plugin.settings.continuePlayback && !this._looping) {
+            this.playNextTrack(audio);
+          } else {
+            this.syncCurrentAudio();
+          }
           this.updateNowPlaying();
         }
       });
@@ -868,6 +1153,16 @@ class AudioSidebarSettingTab extends PluginSettingTab {
           });
         text.inputEl.addClass('audio-sb-settings-input');
       });
+
+    new Setting(containerEl)
+      .setName('Continue playback')
+      .setDesc('Automatically play the next track when the current one ends. Stops at the end of the list. Has no effect when track loop is enabled.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.continuePlayback)
+        .onChange(async (value) => {
+          this.plugin.settings.continuePlayback = value;
+          await this.plugin.saveSettings();
+        }));
 
     new Setting(containerEl)
       .setName('Allow music overlap')
@@ -1131,6 +1426,10 @@ class AudioSidebarPlugin extends Plugin {
     }
 
     new AudioLoopModal(this.app, this, files).open();
+  }
+
+  openSceneCreator() {
+    new CreateSceneModal(this.app, this).open();
   }
 
   // Creates a detached Audio element so SFX plays independently of the
@@ -1549,6 +1848,62 @@ class AudioSidebarPlugin extends Plugin {
 
       btn.onclick = () => {
         this.fadeOutAllAudio();
+      };
+    });
+
+    // Parses name/music/loop lines and renders a single scene-launch button.
+    // Clicking fades out all current audio, then starts the configured music
+    // track and loops together.
+    this.registerMarkdownCodeBlockProcessor('audioscene', (source, el) => {
+      const lines = source.trim().split('\n').map(l => l.trim()).filter(Boolean);
+      let sceneName = '';
+      let musicRef = null;
+      const loopRefs = [];
+
+      for (const line of lines) {
+        if (line.startsWith('name:')) sceneName = line.slice(5).trim();
+        else if (line.startsWith('music:')) musicRef = line.slice(6).trim();
+        else if (line.startsWith('loop:')) loopRefs.push(line.slice(5).trim());
+      }
+
+      const btn = el.createEl('button', { cls: 'audio-sb-codeblock-btn audio-sb-codeblock-scene-btn' });
+      const iconEl = btn.createEl('span', { cls: 'audio-sb-codeblock-icon' });
+      setIcon(iconEl, 'play-circle');
+      const labelEl = btn.createEl('span', { cls: 'audio-sb-codeblock-label' });
+      labelEl.createEl('span', { text: sceneName || 'Scene', cls: 'audio-sb-codeblock-folder' });
+
+      const tags = [];
+      if (musicRef) tags.push('music');
+      if (loopRefs.length > 0) tags.push(`${loopRefs.length} loop${loopRefs.length !== 1 ? 's' : ''}`);
+      if (tags.length > 0) {
+        labelEl.createEl('span', { text: ` · ${tags.join(' · ')}`, cls: 'audio-sb-codeblock-track' });
+      }
+
+      btn.onclick = () => {
+        this.fadeOutAllAudio().then(() => {
+          if (musicRef) {
+            const hashIdx = musicRef.indexOf('#');
+            const folderPath = hashIdx !== -1 ? musicRef.slice(0, hashIdx).trim() : musicRef.trim();
+            const trackName = hashIdx !== -1 ? musicRef.slice(hashIdx + 1).trim().toLowerCase() : null;
+            const folder = this.app.vault.getAbstractFileByPath(normalizePath(folderPath));
+            if (folder) {
+              this.selectedFolder = folder;
+              this.activateView().then(() => {
+                const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+                for (const leaf of leaves) {
+                  if (leaf.view instanceof AudioSidebarView) {
+                    leaf.view.loadFolder(folder);
+                    if (trackName) setTimeout(() => leaf.view.playTrack(trackName), 50);
+                  }
+                }
+              });
+            }
+          }
+          for (const loopRef of loopRefs) {
+            const loopFile = this.resolveLoopFile(loopRef);
+            if (loopFile) this.playLoop(loopFile);
+          }
+        });
       };
     });
 

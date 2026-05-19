@@ -13,6 +13,7 @@ Made by [Patriek Jeuriens](https://community.obsidian.md/plugins/audio-sidebar).
 - Fade-aware crossfading for music tracks with a configurable duration
 - Optional music overlap mode for manual transitions between tracks
 - Per-category volume sliders: master, music, SFX, and loop
+- Scene creator: combine a music track and any number of loops into a single note button
 - Markdown codeblocks for note-embedded audio buttons
 - File-explorer context menu to copy ready-to-paste codeblocks
 
@@ -55,6 +56,25 @@ Toggles a looping ambient sound on or off. The same loop cannot be started twice
 Loops#Rain Interior
 ```
 ````
+
+### Scene
+
+Fades out all current audio and simultaneously starts a music track and any number of loops. Created with the **🎬 Create Scene** button in the sidebar toolbar, which opens a dialog to pick a track and loops and copy the finished codeblock.
+
+````md
+```audioscene
+name: Tavern Night
+music: Music/Bardify#Tavern Night
+loop: Loops#Rain Interior
+loop: Loops#Hearth Fire
+```
+````
+
+- `name` — label shown on the button (required)
+- `music` — optional; uses `folder#basename` syntax, same as `audiosidebar`
+- `loop` — optional; repeatable; uses `folder#basename` syntax, same as `audioloop`
+
+Clicking the button fades out all active audio before starting the scene.
 
 ### Fade out all audio
 
@@ -116,5 +136,6 @@ Right-clicking an audio file opens an `Audio` submenu with:
 - `audiosidebar` uses the sidebar view and can auto-play a track after loading a folder.
 - `audiosfx` plays detached one-shot audio and does not require the sidebar to stay open.
 - `audioloop` tracks active loops by file path so the same loop cannot be started twice.
+- `audioscene` fades out all audio before starting, so it always starts clean.
 - `audiofadeoutall` uses the fade-aware stop path for music and loops.
 - SFX fade out over 500 ms when stopped from the now-playing panel. The stop-all command cuts immediately.
