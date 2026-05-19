@@ -1983,3 +1983,5 @@ class AudioSidebarPlugin extends Plugin {
 }
 
 module.exports = AudioSidebarPlugin;
+
+/* nosourcemap */
