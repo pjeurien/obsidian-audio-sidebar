@@ -562,12 +562,8 @@ body .audio-sb-codeblock-btn:focus {
   padding: 4px;
 }
 
-.audio-sb-scene-selected {
-  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent) !important;
-}
-
-.audio-sb-scene-selected .audio-sb-sfx-icon {
-  color: var(--interactive-accent) !important;
+.audio-sb-sfx-item.audio-sb-scene-selected {
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
 }
 
 .audio-sb-scene-preview {
