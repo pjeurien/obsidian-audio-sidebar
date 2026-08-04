@@ -847,7 +847,8 @@ class AudioSidebarView extends ItemView {
     this._overlapBtn.onclick = () => this.toggleMusicOverlap();
     this.updateOverlapButton();
 
-    const searchEl = content.createEl('input', { cls: 'audio-sb-search', type: 'text' });
+    const searchWrap = content.createEl('div', { cls: 'audio-sb-search-wrap' });
+    const searchEl = searchWrap.createEl('input', { cls: 'audio-sb-search', type: 'text' });
     searchEl.placeholder = 'Search tracks…';
     searchEl.addEventListener('input', () => this.filterTracks(searchEl.value));
 
