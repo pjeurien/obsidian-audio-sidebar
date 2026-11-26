@@ -599,19 +599,34 @@ body .audio-sb-codeblock-btn:focus {
   padding: 8px 10px;
 }
 
+/* Every row in the Volume box (Music, All loops, each loop) shares one grid
+   so labels, sliders and values line up. */
 .audio-sb-scene-volume-row {
   display: grid;
-  grid-template-columns: 90px minmax(0, 1fr) 56px;
+  grid-template-columns: 170px minmax(0, 1fr) 52px;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  min-height: 26px;
+}
+
+/* Obsidian's theme gives range inputs a fixed width; stretch to the column. */
+.audio-sb-scene-volumes input[type='range'].audio-sb-scene-volume-slider {
+  width: 100%;
+  margin: 0;
 }
 
 .audio-sb-scene-volume-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 0.85em;
   cursor: pointer;
+  min-width: 0;
+}
+
+.audio-sb-scene-volume-toggle input[type='checkbox'] {
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .audio-sb-scene-volume-value {
@@ -623,6 +638,46 @@ body .audio-sb-codeblock-btn:focus {
 
 .audio-sb-scene-volume-row.is-disabled .audio-sb-scene-volume-slider {
   opacity: 0.4;
+}
+
+/* Per-loop levels, nested under "All loops". */
+.audio-sb-scene-loop-mix {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.audio-sb-scene-loop-mix.audio-sb-hidden {
+  display: none;
+}
+
+.audio-sb-scene-loop-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 6px;
+  font-size: 0.82em;
+  color: var(--text-muted);
+}
+
+.audio-sb-scene-loop-icon {
+  display: flex;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.audio-sb-scene-loop-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.audio-sb-scene-loop-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .audio-sb-scene-actions {

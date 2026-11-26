@@ -205,6 +205,7 @@ class CreateSceneModal extends Modal {
     this.sceneName = '';
     this.selectedMusic = null;       // TFile | null
     this.selectedLoops = new Map();  // Map<path, TFile>
+    this.loopLevels = new Map();     // Map<path, 0–100>; kept across deselect
     // Optional per-scene volume presets (0–100); null = leave current slider alone.
     this.sceneVolumes = { music: null, loop: null };
     this._musicFiles = [];
@@ -273,11 +274,14 @@ class CreateSceneModal extends Modal {
       this._renderLoopList();
     });
 
-    // Volume presets
-    contentEl.createEl('div', { text: 'Scene volume (optional)', cls: 'audio-sb-scene-section-label' });
+    // Volume: optional Music / All loops presets, then one level per selected
+    // loop nested under All loops (those rows hide while no loop is selected).
+    contentEl.createEl('div', { text: 'Volume', cls: 'audio-sb-scene-section-label' });
     const volumeWrap = contentEl.createEl('div', { cls: 'audio-sb-scene-volumes' });
     this._renderSceneVolumeControl(volumeWrap, 'Music', 'music', 'musicVolume');
-    this._renderSceneVolumeControl(volumeWrap, 'Loops', 'loop', 'loopVolume');
+    this._renderSceneVolumeControl(volumeWrap, 'All loops', 'loop', 'loopVolume');
+    this._loopMixEl = volumeWrap.createEl('div', { cls: 'audio-sb-scene-loop-mix' });
+    this._renderLoopMix();
 
     // Codeblock preview
     contentEl.createEl('div', { text: 'Generated codeblock', cls: 'audio-sb-scene-section-label' });
@@ -409,8 +413,38 @@ class CreateSceneModal extends Modal {
           this.selectedLoops.set(file.path, file);
         }
         this._renderLoopList();
+        this._renderLoopMix();
         this._updatePreview();
       };
+    }
+  }
+
+  // One slider per selected loop: its level relative to the Loop slider.
+  // 100% is the default and is left out of the codeblock.
+  _renderLoopMix() {
+    const mixEl = this._loopMixEl;
+    if (!mixEl) return;
+    mixEl.empty();
+    mixEl.toggleClass('audio-sb-hidden', this.selectedLoops.size === 0);
+
+    for (const [path, file] of this.selectedLoops) {
+      const level = this.loopLevels.has(path) ? this.loopLevels.get(path) : 100;
+      const row = mixEl.createEl('div', { cls: 'audio-sb-scene-volume-row audio-sb-scene-loop-row' });
+      const nameEl = row.createEl('span', { cls: 'audio-sb-scene-loop-name', attr: { title: `${file.basename} — level within all loops` } });
+      setIcon(nameEl.createSpan({ cls: 'audio-sb-scene-loop-icon' }), 'corner-down-right');
+      nameEl.createSpan({ text: file.basename, cls: 'audio-sb-scene-loop-text' });
+      const slider = row.createEl('input', {
+        type: 'range',
+        cls: 'audio-sb-volume-slider audio-sb-scene-volume-slider',
+        attr: { min: '0', max: '100', step: '1', value: String(level) }
+      });
+      slider.value = String(level);
+      const valueEl = row.createEl('span', { text: `${level}%`, cls: 'audio-sb-scene-volume-value' });
+      slider.addEventListener('input', () => {
+        this.loopLevels.set(path, Number(slider.value));
+        valueEl.textContent = `${slider.value}%`;
+        this._updatePreview();
+      });
     }
   }
 
@@ -460,10 +494,11 @@ class CreateSceneModal extends Modal {
       const ref = folder && folder.path !== '/' ? `${folder.path}#${this.selectedMusic.basename}` : this.selectedMusic.basename;
       lines.push(`music: ${ref}`);
     }
-    for (const [, file] of this.selectedLoops) {
+    for (const [path, file] of this.selectedLoops) {
       const folder = file.parent;
       const ref = folder && folder.path !== '/' ? `${folder.path}#${file.basename}` : file.basename;
-      lines.push(`loop: ${ref}`);
+      const level = this.loopLevels.has(path) ? this.loopLevels.get(path) : 100;
+      lines.push(level !== 100 ? `loop: ${ref} | ${level}` : `loop: ${ref}`);
     }
     return `\`\`\`audioscene\n${lines.join('\n')}\n\`\`\``;
   }
@@ -1442,8 +1477,11 @@ class AudioSidebarPlugin extends Plugin {
   }
 
   // Moves from whatever is playing to a scene. Only the differences change:
-  // loops in both stay put, others fade out while new ones fade in, music
-  // crossfades (see transitionMusicForScene), and one-shot SFX fade out.
+  // loops in both stay put (gliding to their new per-loop level), others fade
+  // out while new ones fade in, music crossfades (see
+  // transitionMusicForScene), and one-shot SFX fade out.
+  // loopRefs entries are either a ref string or { ref, volume } where volume
+  // is 0–100 (null/undefined = 100).
   startScene({ musicRef = null, loopRefs = [], volumes = {} } = {}) {
     const token = (this._sceneToken = (this._sceneToken || 0) + 1);
     const isCurrent = () => token === this._sceneToken;
@@ -1454,19 +1492,26 @@ class AudioSidebarPlugin extends Plugin {
     this._activeSfx.forEach(audio => this.fadeSfxOut(audio));
 
     // Loops
-    const wanted = new Map();
-    for (const ref of loopRefs) {
+    const wanted = new Map(); // path → { file, gain }
+    for (const entry of loopRefs) {
+      const ref = typeof entry === 'string' ? entry : entry.ref;
+      const volume = typeof entry === 'string' ? null : entry.volume;
+      const gain = volume === null || volume === undefined ? 1 : this.clampVolume(volume) / 100;
       const file = this.resolveLoopFile(ref);
-      if (file) wanted.set(file.path, file);
+      if (file) wanted.set(file.path, { file, gain });
       else new Notice(`Scene loop not found: ${ref}`);
     }
     for (const path of Array.from(this._activeLoops.keys())) {
       if (!wanted.has(path)) this.stopLoopByPath(path);
     }
-    for (const [path, file] of wanted) {
+    for (const [path, { file, gain }] of wanted) {
       const existing = this._activeLoops.get(path);
-      if (existing) this._startLoopFade(existing, 1, fadeMs); // undo a partial fade
-      else this.playLoop(file);
+      if (existing) {
+        this._rampLoopGain(existing, gain, fadeMs);
+        this._startLoopFade(existing, 1, fadeMs); // undo a partial fade
+      } else {
+        this.playLoop(file, gain);
+      }
     }
 
     // Music
@@ -1708,7 +1753,9 @@ class AudioSidebarPlugin extends Plugin {
 
   // Starts a looping Audio element for the given file. Keyed by file.path so
   // the same loop can't be started twice, and can be stopped individually.
-  playLoop(file) {
+  // gain (0–1) is this loop's own level on top of the Loop slider; scenes set
+  // it per loop, everything else plays loops at full gain.
+  playLoop(file, gain = 1) {
     if (this._activeLoops.has(file.path)) return;
     // Still fading out from a stop? Bring that one back instead of restarting
     // the file. _startLoopFade cancels the fade-out, so its pause never runs.
@@ -1716,6 +1763,7 @@ class AudioSidebarPlugin extends Plugin {
     if (fading) {
       this._fadingLoops.delete(file.path);
       this._activeLoops.set(file.path, fading);
+      this._rampLoopGain(fading, gain, this.settings.musicFadeMs);
       this._startLoopFade(fading, 1, this.settings.musicFadeMs);
       this.refreshNowPlaying();
       return;
@@ -1724,6 +1772,7 @@ class AudioSidebarPlugin extends Plugin {
     audio.loop = true;
     audio.volume = 0;
     audio.dataset.loopFadeLevel = '0';
+    audio.dataset.loopGain = String(Math.max(0, Math.min(1, gain)));
     audio.dataset.loopName = file.basename;
     audio.dataset.loopPath = file.path;
     audio.addEventListener('ended', () => {
@@ -1774,9 +1823,38 @@ class AudioSidebarPlugin extends Plugin {
     });
   }
 
+  // Loop volume = master × Loop slider × this loop's own gain × fade level.
   _applyLoopVolume(audio) {
     const fadeLevel = Number(audio.dataset.loopFadeLevel || 1);
-    audio.volume = this.getEffectiveVolume('loop') * fadeLevel;
+    const gain = audio.dataset.loopGain !== undefined ? Number(audio.dataset.loopGain) : 1;
+    audio.volume = this.getEffectiveVolume('loop') * gain * fadeLevel;
+  }
+
+  // Glides a loop's own gain (0–1) to target, separately from its fade so a
+  // loop kept across scenes can change level while staying audible.
+  _rampLoopGain(audio, target, durationMs) {
+    if (audio._loopGainInterval) {
+      window.clearInterval(audio._loopGainInterval);
+      audio._loopGainInterval = null;
+    }
+    const to = Math.max(0, Math.min(1, Number(target)));
+    const from = audio.dataset.loopGain !== undefined ? Number(audio.dataset.loopGain) : 1;
+    const duration = this.clampFadeMs(durationMs);
+    if (duration <= 0 || Math.abs(from - to) < 0.005) {
+      audio.dataset.loopGain = String(to);
+      this._applyLoopVolume(audio);
+      return;
+    }
+    const startedAt = Date.now();
+    audio._loopGainInterval = window.setInterval(() => {
+      const progress = Math.min((Date.now() - startedAt) / duration, 1);
+      audio.dataset.loopGain = String(from + (to - from) * progress);
+      this._applyLoopVolume(audio);
+      if (progress >= 1) {
+        window.clearInterval(audio._loopGainInterval);
+        audio._loopGainInterval = null;
+      }
+    }, 50);
   }
 
   _startLoopFade(audio, targetFadeLevel, durationMs) {
@@ -2109,7 +2187,16 @@ class AudioSidebarPlugin extends Plugin {
         const value = line.slice(colonIdx + 1).trim();
         if (key === 'name') sceneName = value;
         else if (key === 'music') musicRef = value;
-        else if (key === 'loop') loopRefs.push(value);
+        else if (key === 'loop') {
+          // Optional per-loop volume after a pipe: "Loops#Rain | 40". A pipe
+          // can't appear in vault file names, so it's safe as a separator.
+          const pipeIdx = value.lastIndexOf('|');
+          if (pipeIdx !== -1) {
+            loopRefs.push({ ref: value.slice(0, pipeIdx).trim(), volume: parseVolume(value.slice(pipeIdx + 1)) });
+          } else {
+            loopRefs.push({ ref: value, volume: null });
+          }
+        }
         else if (key === 'musicvolume') sceneVolumes.music = parseVolume(value);
         else if (key === 'loopvolume') sceneVolumes.loop = parseVolume(value);
       }
