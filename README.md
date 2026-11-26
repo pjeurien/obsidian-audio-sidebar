@@ -9,7 +9,7 @@ Made by [Patriek Jeuriens](https://community.obsidian.md/plugins/audio-sidebar).
 - Persistent right-sidebar player for folder-based music playback
 - Searchable one-shot sound effects picker with fade-out on stop
 - Searchable looping ambience picker — loops fade in and out automatically
-- Now-playing panel showing all active music, loops, and SFX with elapsed time and stop controls
+- Now-playing panel showing all active music, loops, and SFX with elapsed time and stop controls, plus each loop's level
 - Fade-aware crossfading for music tracks with a configurable duration
 - Optional music overlap mode for manual transitions between tracks
 - Per-category volume sliders: master, music, SFX, and loop
@@ -74,7 +74,7 @@ loop: Loops#Hearth Fire
 
 - `name` — label shown on the button (required)
 - `music` — optional; uses `folder#basename` syntax, same as `audiosidebar`
-- `loop` — optional; repeatable; uses `folder#basename` syntax, same as `audioloop`. Add `| 0–100` after the reference to set that loop's own level. The level is relative to the Loop slider, so `| 40` plays the loop at 40% of the Loop volume. Without it the loop plays at 100%.
+- `loop` — optional; repeatable; uses `folder#basename` syntax, same as `audioloop`. Add `| 0–100` after the reference to set that loop's own level, relative to the Loop slider. Levels follow how loud the loop sounds rather than raw amplitude: `| 50` sounds about half as loud, and `| 90` is a small but audible step down. Without a level the loop plays at 100%. Each loop's level is shown next to it in the now-playing panel.
 - `musicVolume` — optional; 0–100. Sets the Music volume slider when the scene starts
 - `loopVolume` — optional; 0–100. Sets the Loop volume slider when the scene starts
 

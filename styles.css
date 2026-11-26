@@ -116,6 +116,24 @@
   color: var(--text-normal);
 }
 
+.audio-sb-np-level {
+  flex-shrink: 0;
+  min-width: 34px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 0.72em;
+  line-height: 1.6;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+}
+
+.audio-sb-np-level.is-reduced {
+  color: #ffc107;
+  background: rgba(255, 193, 7, 0.14);
+}
+
 .audio-sb-np-controls {
   display: flex;
   gap: 1px;

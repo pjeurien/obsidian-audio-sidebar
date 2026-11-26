@@ -1033,6 +1033,16 @@ class AudioSidebarView extends ItemView {
 
     row.createEl('span', { text: name, cls: 'audio-sb-np-name' });
 
+    // Loops always show their own level (100% unless a scene set one).
+    if (type === 'loop') {
+      const level = audio.dataset.loopLevel !== undefined ? Number(audio.dataset.loopLevel) : 100;
+      row.createEl('span', {
+        text: `${Math.round(level)}%`,
+        cls: `audio-sb-np-level${level < 100 ? ' is-reduced' : ''}`,
+        attr: { 'aria-label': `Loop level ${Math.round(level)}% of All loops` }
+      });
+    }
+
     const controls = row.createEl('div', { cls: 'audio-sb-np-controls' });
 
     if (type !== 'sfx') {
@@ -1492,25 +1502,25 @@ class AudioSidebarPlugin extends Plugin {
     this._activeSfx.forEach(audio => this.fadeSfxOut(audio));
 
     // Loops
-    const wanted = new Map(); // path → { file, gain }
+    const wanted = new Map(); // path → { file, level }
     for (const entry of loopRefs) {
       const ref = typeof entry === 'string' ? entry : entry.ref;
       const volume = typeof entry === 'string' ? null : entry.volume;
-      const gain = volume === null || volume === undefined ? 1 : this.clampVolume(volume) / 100;
+      const level = volume === null || volume === undefined ? 100 : this.clampVolume(volume);
       const file = this.resolveLoopFile(ref);
-      if (file) wanted.set(file.path, { file, gain });
+      if (file) wanted.set(file.path, { file, level });
       else new Notice(`Scene loop not found: ${ref}`);
     }
     for (const path of Array.from(this._activeLoops.keys())) {
       if (!wanted.has(path)) this.stopLoopByPath(path);
     }
-    for (const [path, { file, gain }] of wanted) {
+    for (const [path, { file, level }] of wanted) {
       const existing = this._activeLoops.get(path);
       if (existing) {
-        this._rampLoopGain(existing, gain, fadeMs);
+        this._setLoopLevel(existing, level, fadeMs);
         this._startLoopFade(existing, 1, fadeMs); // undo a partial fade
       } else {
-        this.playLoop(file, gain);
+        this.playLoop(file, level);
       }
     }
 
@@ -1753,9 +1763,9 @@ class AudioSidebarPlugin extends Plugin {
 
   // Starts a looping Audio element for the given file. Keyed by file.path so
   // the same loop can't be started twice, and can be stopped individually.
-  // gain (0–1) is this loop's own level on top of the Loop slider; scenes set
-  // it per loop, everything else plays loops at full gain.
-  playLoop(file, gain = 1) {
+  // level (0–100) is this loop's own level on top of the Loop slider; scenes
+  // set it per loop, everything else plays loops at 100.
+  playLoop(file, level = 100) {
     if (this._activeLoops.has(file.path)) return;
     // Still fading out from a stop? Bring that one back instead of restarting
     // the file. _startLoopFade cancels the fade-out, so its pause never runs.
@@ -1763,7 +1773,7 @@ class AudioSidebarPlugin extends Plugin {
     if (fading) {
       this._fadingLoops.delete(file.path);
       this._activeLoops.set(file.path, fading);
-      this._rampLoopGain(fading, gain, this.settings.musicFadeMs);
+      this._setLoopLevel(fading, level, this.settings.musicFadeMs);
       this._startLoopFade(fading, 1, this.settings.musicFadeMs);
       this.refreshNowPlaying();
       return;
@@ -1772,7 +1782,8 @@ class AudioSidebarPlugin extends Plugin {
     audio.loop = true;
     audio.volume = 0;
     audio.dataset.loopFadeLevel = '0';
-    audio.dataset.loopGain = String(Math.max(0, Math.min(1, gain)));
+    audio.dataset.loopLevel = String(this.clampVolume(level));
+    audio.dataset.loopGain = String(this.loopLevelToGain(level));
     audio.dataset.loopName = file.basename;
     audio.dataset.loopPath = file.path;
     audio.addEventListener('ended', () => {
@@ -1828,6 +1839,21 @@ class AudioSidebarPlugin extends Plugin {
     const fadeLevel = Number(audio.dataset.loopFadeLevel || 1);
     const gain = audio.dataset.loopGain !== undefined ? Number(audio.dataset.loopGain) : 1;
     audio.volume = this.getEffectiveVolume('loop') * gain * fadeLevel;
+  }
+
+  // Per-loop level (0–100) → gain. Squared so the level tracks loudness:
+  // 50 ≈ half as loud (−12 dB), 90 is audibly quieter than 100. The category
+  // sliders stay linear so existing mixes don't change.
+  loopLevelToGain(level) {
+    const l = this.clampVolume(level) / 100;
+    return l * l;
+  }
+
+  // Sets a loop's level (shown in Now playing straight away) and glides its
+  // gain there.
+  _setLoopLevel(audio, level, durationMs) {
+    audio.dataset.loopLevel = String(this.clampVolume(level));
+    this._rampLoopGain(audio, this.loopLevelToGain(level), durationMs);
   }
 
   // Glides a loop's own gain (0–1) to target, separately from its fade so a
