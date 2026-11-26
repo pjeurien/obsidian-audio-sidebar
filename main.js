@@ -205,6 +205,8 @@ class CreateSceneModal extends Modal {
     this.sceneName = '';
     this.selectedMusic = null;       // TFile | null
     this.selectedLoops = new Map();  // Map<path, TFile>
+    // Optional per-scene volume presets (0–100); null = leave current slider alone.
+    this.sceneVolumes = { music: null, loop: null };
     this._musicFiles = [];
     this._loopFiles = [];
     this._filteredMusicFiles = [];
@@ -270,6 +272,12 @@ class CreateSceneModal extends Modal {
       );
       this._renderLoopList();
     });
+
+    // Volume presets
+    contentEl.createEl('div', { text: 'Scene volume (optional)', cls: 'audio-sb-scene-section-label' });
+    const volumeWrap = contentEl.createEl('div', { cls: 'audio-sb-scene-volumes' });
+    this._renderSceneVolumeControl(volumeWrap, 'Music', 'music', 'musicVolume');
+    this._renderSceneVolumeControl(volumeWrap, 'Loops', 'loop', 'loopVolume');
 
     // Codeblock preview
     contentEl.createEl('div', { text: 'Generated codeblock', cls: 'audio-sb-scene-section-label' });
@@ -406,10 +414,47 @@ class CreateSceneModal extends Modal {
     }
   }
 
+  // One row: [toggle] Label [slider] value. The slider starts at the current
+  // category volume and is only written to the codeblock when toggled on.
+  _renderSceneVolumeControl(parentEl, label, key, settingKey) {
+    const row = parentEl.createEl('div', { cls: 'audio-sb-scene-volume-row' });
+    const toggleLabel = row.createEl('label', { cls: 'audio-sb-scene-volume-toggle' });
+    const checkbox = toggleLabel.createEl('input', { type: 'checkbox' });
+    toggleLabel.createSpan({ text: label });
+
+    const initial = this.plugin.clampVolume(this.plugin.settings[settingKey]);
+    const slider = row.createEl('input', {
+      type: 'range',
+      cls: 'audio-sb-volume-slider audio-sb-scene-volume-slider',
+      attr: { min: '0', max: '100', step: '1', value: String(initial) }
+    });
+    slider.value = String(initial);
+    slider.disabled = true;
+    const valueEl = row.createEl('span', { text: 'current', cls: 'audio-sb-scene-volume-value' });
+
+    const sync = () => {
+      if (checkbox.checked) {
+        this.sceneVolumes[key] = Number(slider.value);
+        valueEl.textContent = `${slider.value}%`;
+      } else {
+        this.sceneVolumes[key] = null;
+        valueEl.textContent = 'current';
+      }
+      slider.disabled = !checkbox.checked;
+      row.toggleClass('is-disabled', !checkbox.checked);
+      this._updatePreview();
+    };
+    row.addClass('is-disabled');
+    checkbox.addEventListener('change', sync);
+    slider.addEventListener('input', sync);
+  }
+
   _buildCodeblock() {
     const name = this.sceneName.trim();
     if (!name) return '';
     const lines = [`name: ${name}`];
+    if (this.sceneVolumes.music !== null) lines.push(`musicVolume: ${this.sceneVolumes.music}`);
+    if (this.sceneVolumes.loop !== null) lines.push(`loopVolume: ${this.sceneVolumes.loop}`);
     if (this.selectedMusic) {
       const folder = this.selectedMusic.parent;
       const ref = folder && folder.path !== '/' ? `${folder.path}#${this.selectedMusic.basename}` : this.selectedMusic.basename;
@@ -622,7 +667,8 @@ class AudioSidebarView extends ItemView {
       if (!input) continue;
       input.value = String(value);
       const valueEl = input.parentElement?.querySelector('.audio-sb-volume-value');
-      if (valueEl) valueEl.textContent = `${value}%`;
+      // Rounded because scene volume ramps pass through fractional values.
+      if (valueEl) valueEl.textContent = `${Math.round(value)}%`;
     }
   }
 
@@ -1050,23 +1096,60 @@ class AudioSidebarView extends ItemView {
     }
   }
 
-  // Finds a track by partial name match and starts playing it. Used by the
-  // audiosidebar codeblock processor to auto-play after loading a folder.
+  // Returns the <audio> for a track name (lowercase). An exact basename match
+  // wins; otherwise the first partial match in list order.
+  findTrackAudio(trackName) {
+    if (!this._trackList || !trackName) return null;
+    const items = Array.from(this._trackList.querySelectorAll('.audio-sb-item'));
+    const item = items.find(i => i.dataset.name === trackName)
+      || items.find(i => i.dataset.name.includes(trackName));
+    return item ? item.querySelector('audio') : null;
+  }
+
+  // Finds a track by name and starts playing it. Used by the audiosidebar
+  // codeblock processor to auto-play after loading a folder.
   playTrack(trackName) {
-    if (!this._trackList) return;
-    const items = this._trackList.querySelectorAll('.audio-sb-item');
-    for (const item of items) {
-      if (item.dataset.name.includes(trackName)) {
-        const audio = item.querySelector('audio');
-        if (audio) {
-          audio.currentTime = 0;
-          this.fadeInTrack(audio).catch(() => {
-            new Notice(`Could not play ${audio.dataset.trackName || 'track'}`);
-          });
-        }
-        break;
+    const audio = this.findTrackAudio(trackName);
+    if (!audio) return;
+    audio.currentTime = 0;
+    this.fadeInTrack(audio).catch(() => {
+      new Notice(`Could not play ${audio.dataset.trackName || 'track'}`);
+    });
+  }
+
+  // Scene transition for this view's music. Same track already playing: it
+  // keeps going (and any fade-out on it is cancelled). Another track in the
+  // loaded folder: true crossfade. Different folder: fade out, then load —
+  // reloading the list removes the old <audio> elements, which would cut them.
+  transitionMusicForScene(folder, trackName, isCurrent) {
+    if (folder && this._loadedFolder && this._loadedFolder.path === folder.path) {
+      const target = this.findTrackAudio(trackName);
+      this.getTrackAudios()
+        .filter(a => a !== target && !a.paused && !a.ended)
+        .forEach(a => this.fadeOutAndStop(a));
+      if (!target) {
+        this.updateNowPlaying();
+        return;
       }
+      if (!target.paused && !target.ended) {
+        this.startFade(target, 1, this.getFadeDurationMs());
+        this._currentAudio = target;
+        this._currentTrackName = target.dataset.trackName || '';
+        this.updateNowPlaying();
+      } else {
+        target.currentTime = 0;
+        this.fadeInTrack(target).catch(() => {
+          new Notice(`Could not play ${target.dataset.trackName || 'track'}`);
+        });
+      }
+      return;
     }
+
+    this.fadeOutAllTracks().then(() => {
+      if (!folder || !isCurrent()) return;
+      this.loadFolder(folder);
+      if (trackName) setTimeout(() => { if (isCurrent()) this.playTrack(trackName); }, 50);
+    });
   }
 
   async onClose() {
@@ -1273,6 +1356,7 @@ class AudioSidebarPlugin extends Plugin {
   // Updates the in-memory setting and refreshes all live audio without saving,
   // so the slider feels responsive while dragging.
   previewVolumeSetting(key, value) {
+    this.cancelVolumeRamp(key); // the user takes this slider over from a scene
     this.settings[key] = this.clampVolume(value);
     this.refreshAllViews();
     this.refreshActiveSfxVolumes();
@@ -1282,6 +1366,137 @@ class AudioSidebarPlugin extends Plugin {
   async updateVolumeSetting(key, value) {
     this.previewVolumeSetting(key, value);
     await this.saveSettings();
+  }
+
+  // Applies a scene's volume presets to the category sliders, gliding over
+  // rampMs so audio that keeps playing across the scene change doesn't jump.
+  // Keys left null/undefined keep their current value. Saved when the ramp ends.
+  applySceneVolumes({ music = null, loop = null } = {}, rampMs = 0) {
+    this.cancelVolumeRamp();
+    const targets = {};
+    if (music !== null && music !== undefined) targets.musicVolume = this.clampVolume(music);
+    if (loop !== null && loop !== undefined) targets.loopVolume = this.clampVolume(loop);
+    if (Object.keys(targets).length === 0) return Promise.resolve();
+
+    const starts = {};
+    for (const key of Object.keys(targets)) starts[key] = this.clampVolume(this.settings[key]);
+    const duration = this.clampFadeMs(rampMs);
+
+    if (duration <= 0) {
+      Object.assign(this.settings, targets);
+      this.refreshLiveVolumes();
+      return this.saveSettings();
+    }
+
+    return new Promise(resolve => {
+      const ramp = { keys: new Set(Object.keys(targets)), resolve };
+      const startedAt = Date.now();
+      ramp.id = window.setInterval(() => {
+        const progress = Math.min((Date.now() - startedAt) / duration, 1);
+        for (const key of ramp.keys) {
+          this.settings[key] = starts[key] + (targets[key] - starts[key]) * progress;
+        }
+        this.refreshLiveVolumes();
+        if (progress >= 1) {
+          window.clearInterval(ramp.id);
+          this._volumeRamp = null;
+          for (const key of ramp.keys) this.settings[key] = targets[key];
+          this.saveSettings().then(resolve, resolve);
+        }
+      }, 50);
+      this._volumeRamp = ramp;
+    });
+  }
+
+  // Stops a running scene volume ramp. With a key, only that slider is released
+  // (the user grabbed it); otherwise the whole ramp stops. Values are rounded so
+  // nothing fractional gets saved.
+  cancelVolumeRamp(key = null) {
+    const ramp = this._volumeRamp;
+    if (!ramp) return;
+    const released = key ? [key] : Array.from(ramp.keys);
+    for (const k of released) {
+      if (!ramp.keys.has(k)) continue;
+      ramp.keys.delete(k);
+      this.settings[k] = Math.round(this.clampVolume(this.settings[k]));
+    }
+    if (ramp.keys.size === 0) {
+      window.clearInterval(ramp.id);
+      this._volumeRamp = null;
+      ramp.resolve();
+    }
+  }
+
+  // Pushes the current volume settings to all live music and loop audio and to
+  // the sidebar sliders. Deliberately skips the overlap policy that
+  // refreshAllViews runs: re-triggering it every ramp tick would keep
+  // restarting the music crossfade.
+  refreshLiveVolumes() {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+      if (leaf.view instanceof AudioSidebarView) {
+        leaf.view.applyMusicVolume();
+        leaf.view.syncVolumeControls();
+      }
+    }
+    this.refreshActiveLoopVolumes();
+  }
+
+  // Moves from whatever is playing to a scene. Only the differences change:
+  // loops in both stay put, others fade out while new ones fade in, music
+  // crossfades (see transitionMusicForScene), and one-shot SFX fade out.
+  startScene({ musicRef = null, loopRefs = [], volumes = {} } = {}) {
+    const token = (this._sceneToken = (this._sceneToken || 0) + 1);
+    const isCurrent = () => token === this._sceneToken;
+    const fadeMs = this.clampFadeMs(this.settings.musicFadeMs);
+
+    this.applySceneVolumes(volumes, fadeMs);
+
+    this._activeSfx.forEach(audio => this.fadeSfxOut(audio));
+
+    // Loops
+    const wanted = new Map();
+    for (const ref of loopRefs) {
+      const file = this.resolveLoopFile(ref);
+      if (file) wanted.set(file.path, file);
+      else new Notice(`Scene loop not found: ${ref}`);
+    }
+    for (const path of Array.from(this._activeLoops.keys())) {
+      if (!wanted.has(path)) this.stopLoopByPath(path);
+    }
+    for (const [path, file] of wanted) {
+      const existing = this._activeLoops.get(path);
+      if (existing) this._startLoopFade(existing, 1, fadeMs); // undo a partial fade
+      else this.playLoop(file);
+    }
+
+    // Music
+    let folder = null;
+    let trackName = null;
+    if (musicRef) {
+      const hashIdx = musicRef.indexOf('#');
+      const folderPath = hashIdx !== -1 ? musicRef.slice(0, hashIdx).trim() : musicRef.trim();
+      trackName = hashIdx !== -1 ? musicRef.slice(hashIdx + 1).trim().toLowerCase() : null;
+      folder = this.getFolderByPath(folderPath);
+      if (!folder) new Notice(`Scene music folder not found: ${folderPath}`);
+    }
+
+    const views = () => this.app.workspace.getLeavesOfType(VIEW_TYPE)
+      .map(leaf => leaf.view)
+      .filter(view => view instanceof AudioSidebarView);
+
+    if (folder) {
+      this.selectedFolder = folder;
+      // The sidebar may be closed; open it before handing over the music.
+      const ready = views().length ? Promise.resolve() : this.activateView();
+      ready.then(() => {
+        if (!isCurrent()) return;
+        views().forEach(view => view.transitionMusicForScene(folder, trackName, isCurrent));
+      });
+    } else {
+      views().forEach(view => view.transitionMusicForScene(null, null, isCurrent));
+    }
+
+    this.refreshNowPlaying();
   }
 
   async updateFadeSetting(value) {
@@ -1495,6 +1710,16 @@ class AudioSidebarPlugin extends Plugin {
   // the same loop can't be started twice, and can be stopped individually.
   playLoop(file) {
     if (this._activeLoops.has(file.path)) return;
+    // Still fading out from a stop? Bring that one back instead of restarting
+    // the file. _startLoopFade cancels the fade-out, so its pause never runs.
+    const fading = this._fadingLoops.get(file.path);
+    if (fading) {
+      this._fadingLoops.delete(file.path);
+      this._activeLoops.set(file.path, fading);
+      this._startLoopFade(fading, 1, this.settings.musicFadeMs);
+      this.refreshNowPlaying();
+      return;
+    }
     const audio = new Audio(this.app.vault.getResourcePath(file));
     audio.loop = true;
     audio.volume = 0;
@@ -1525,23 +1750,28 @@ class AudioSidebarPlugin extends Plugin {
     if (!audio) return;
     this._activeLoops.delete(path);
     this.refreshNowPlaying();
-    this._startLoopFade(audio, 0, this.settings.musicFadeMs).then(() => {
+    return this._fadeOutLoop(path, audio);
+  }
+
+  stopAllLoops() {
+    const entries = Array.from(this._activeLoops.entries());
+    this._activeLoops.clear();
+    this.refreshNowPlaying();
+    // Returned so callers (fade-out-all) can wait for the fades to end.
+    return Promise.all(entries.map(([path, audio]) => this._fadeOutLoop(path, audio)));
+  }
+
+  // Fades a loop out and stops it, tracking it in _fadingLoops meanwhile so
+  // playLoop can rescue it. A rescued fade never resolves (its interval is
+  // cleared), so the pause below only runs for loops that really ended.
+  _fadeOutLoop(path, audio) {
+    this._fadingLoops.set(path, audio);
+    return this._startLoopFade(audio, 0, this.settings.musicFadeMs).then(() => {
+      if (this._fadingLoops.get(path) === audio) this._fadingLoops.delete(path);
       audio.pause();
       audio.currentTime = 0;
       audio.dataset.loopFadeLevel = '1';
     });
-  }
-
-  stopAllLoops() {
-    const audios = Array.from(this._activeLoops.values());
-    this._activeLoops.clear();
-    this.refreshNowPlaying();
-    for (const audio of audios) {
-      this._startLoopFade(audio, 0, this.settings.musicFadeMs).then(() => {
-        audio.pause();
-        audio.currentTime = 0;
-      });
-    }
   }
 
   _applyLoopVolume(audio) {
@@ -1618,6 +1848,7 @@ class AudioSidebarPlugin extends Plugin {
   }
 
   fadeOutAllAudio() {
+    this._sceneToken++; // cancel a scene's pending music hand-over
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
     const trackFadePromises = [];
 
@@ -1652,6 +1883,9 @@ class AudioSidebarPlugin extends Plugin {
     this.selectedFolder = null;
     this._activeSfx = new Set();
     this._activeLoops = new Map();
+    this._fadingLoops = new Map(); // path → audio still fading out after a stop
+    this._sceneToken = 0;          // bumped per scene start; stale callbacks bail
+    this._volumeRamp = null;
     this.registerView(VIEW_TYPE, (leaf) => new AudioSidebarView(leaf, this));
     this.addSettingTab(new AudioSidebarSettingTab(this.app, this));
     this.addRibbonIcon('music', 'Audio Sidebar', () => this.activateView());
@@ -1852,19 +2086,32 @@ class AudioSidebarPlugin extends Plugin {
       };
     });
 
-    // Parses name/music/loop lines and renders a single scene-launch button.
-    // Clicking fades out all current audio, then starts the configured music
-    // track and loops together.
+    // Parses name/music/loop/volume lines and renders a single scene-launch
+    // button. Clicking transitions to the scene via startScene: shared loops
+    // and the same music track keep playing, everything else crossfades.
     this.registerMarkdownCodeBlockProcessor('audioscene', (source, el) => {
       const lines = source.trim().split('\n').map(l => l.trim()).filter(Boolean);
       let sceneName = '';
       let musicRef = null;
       const loopRefs = [];
+      const sceneVolumes = { music: null, loop: null };
+
+      // Accepts a 0–100 number, optionally with a trailing %.
+      const parseVolume = (raw) => {
+        const n = parseFloat(String(raw).replace('%', '').trim());
+        return Number.isFinite(n) ? this.clampVolume(Math.round(n)) : null;
+      };
 
       for (const line of lines) {
-        if (line.startsWith('name:')) sceneName = line.slice(5).trim();
-        else if (line.startsWith('music:')) musicRef = line.slice(6).trim();
-        else if (line.startsWith('loop:')) loopRefs.push(line.slice(5).trim());
+        const colonIdx = line.indexOf(':');
+        if (colonIdx === -1) continue;
+        const key = line.slice(0, colonIdx).trim().toLowerCase().replace(/[\s_-]/g, '');
+        const value = line.slice(colonIdx + 1).trim();
+        if (key === 'name') sceneName = value;
+        else if (key === 'music') musicRef = value;
+        else if (key === 'loop') loopRefs.push(value);
+        else if (key === 'musicvolume') sceneVolumes.music = parseVolume(value);
+        else if (key === 'loopvolume') sceneVolumes.loop = parseVolume(value);
       }
 
       const btn = el.createEl('button', { cls: 'audio-sb-codeblock-btn audio-sb-codeblock-scene-btn' });
@@ -1874,37 +2121,15 @@ class AudioSidebarPlugin extends Plugin {
       labelEl.createEl('span', { text: sceneName || 'Scene', cls: 'audio-sb-codeblock-folder' });
 
       const tags = [];
-      if (musicRef) tags.push('music');
-      if (loopRefs.length > 0) tags.push(`${loopRefs.length} loop${loopRefs.length !== 1 ? 's' : ''}`);
+      const volTag = (v) => (v !== null ? ` ${v}%` : '');
+      if (musicRef) tags.push(`music${volTag(sceneVolumes.music)}`);
+      if (loopRefs.length > 0) tags.push(`${loopRefs.length} loop${loopRefs.length !== 1 ? 's' : ''}${volTag(sceneVolumes.loop)}`);
       if (tags.length > 0) {
         labelEl.createEl('span', { text: ` · ${tags.join(' · ')}`, cls: 'audio-sb-codeblock-track' });
       }
 
       btn.onclick = () => {
-        this.fadeOutAllAudio().then(() => {
-          if (musicRef) {
-            const hashIdx = musicRef.indexOf('#');
-            const folderPath = hashIdx !== -1 ? musicRef.slice(0, hashIdx).trim() : musicRef.trim();
-            const trackName = hashIdx !== -1 ? musicRef.slice(hashIdx + 1).trim().toLowerCase() : null;
-            const folder = this.app.vault.getAbstractFileByPath(normalizePath(folderPath));
-            if (folder) {
-              this.selectedFolder = folder;
-              this.activateView().then(() => {
-                const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
-                for (const leaf of leaves) {
-                  if (leaf.view instanceof AudioSidebarView) {
-                    leaf.view.loadFolder(folder);
-                    if (trackName) setTimeout(() => leaf.view.playTrack(trackName), 50);
-                  }
-                }
-              });
-            }
-          }
-          for (const loopRef of loopRefs) {
-            const loopFile = this.resolveLoopFile(loopRef);
-            if (loopFile) this.playLoop(loopFile);
-          }
-        });
+        this.startScene({ musicRef, loopRefs, volumes: sceneVolumes });
       };
     });
 
@@ -1977,6 +2202,7 @@ class AudioSidebarPlugin extends Plugin {
   }
 
   onunload() {
+    this.cancelVolumeRamp();
     this.stopAllSfx();
     this.stopAllLoops();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);

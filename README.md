@@ -13,7 +13,7 @@ Made by [Patriek Jeuriens](https://community.obsidian.md/plugins/audio-sidebar).
 - Fade-aware crossfading for music tracks with a configurable duration
 - Optional music overlap mode for manual transitions between tracks
 - Per-category volume sliders: master, music, SFX, and loop
-- Scene creator: combine a music track and any number of loops into a single note button
+- Scene creator: combine a music track and any number of loops into a single note button, with optional preset music and loop volumes
 - Markdown codeblocks for note-embedded audio buttons
 - File-explorer context menu to copy ready-to-paste codeblocks
 
@@ -59,11 +59,13 @@ Loops#Rain Interior
 
 ### Scene
 
-Fades out all current audio and simultaneously starts a music track and any number of loops. Created with the **🎬 Create Scene** button in the sidebar toolbar, which opens a dialog to pick a track and loops and copy the finished codeblock.
+Switches to a music track and any number of loops, crossfading only what changes. Created with the **🎬 Create Scene** button in the sidebar toolbar, which opens a dialog to pick a track and loops and copy the finished codeblock.
 
 ````md
 ```audioscene
 name: Tavern Night
+musicVolume: 80
+loopVolume: 35
 music: Music/Bardify#Tavern Night
 loop: Loops#Rain Interior
 loop: Loops#Hearth Fire
@@ -73,8 +75,17 @@ loop: Loops#Hearth Fire
 - `name` — label shown on the button (required)
 - `music` — optional; uses `folder#basename` syntax, same as `audiosidebar`
 - `loop` — optional; repeatable; uses `folder#basename` syntax, same as `audioloop`
+- `musicVolume` — optional; 0–100. Sets the Music volume slider when the scene starts
+- `loopVolume` — optional; 0–100. Sets the Loop volume slider when the scene starts
 
-Clicking the button fades out all active audio before starting the scene.
+Clicking the button moves from what is playing now to the scene, changing only what differs:
+
+- **Loops** that both scenes share keep playing without a restart. Loops that aren't in the new scene fade out while the new ones fade in.
+- **Music:** the same track keeps playing from where it is. A different track in the folder already loaded in the sidebar crossfades. A track from another folder plays after the current music fades out, because loading the new folder replaces the sidebar's track list.
+- **Volumes** set by the scene move smoothly to their new values over the fade duration, and the sliders move with them. A volume that the scene leaves out stays where it is. Moving a slider yourself during the change takes over that slider.
+- **Sound effects** still playing fade out.
+
+If you switch scenes again before a change finishes, a loop or track that is still fading out comes back instead of restarting. The Create Scene dialog has an optional toggle and slider for each volume.
 
 ### Fade out all audio
 
@@ -136,6 +147,6 @@ Right-clicking an audio file opens an `Audio` submenu with:
 - `audiosidebar` uses the sidebar view and can auto-play a track after loading a folder.
 - `audiosfx` plays detached one-shot audio and does not require the sidebar to stay open.
 - `audioloop` tracks active loops by file path so the same loop cannot be started twice.
-- `audioscene` fades out all audio before starting, so it always starts clean.
+- `audioscene` crossfades from the current audio to the scene, so shared loops and the same music track carry on uninterrupted. Use an `audiofadeoutall` button first if you want a scene to start from silence. Scene volume presets change the saved Music/Loop sliders, so they stay in effect until you move the sliders or start another scene that sets them.
 - `audiofadeoutall` uses the fade-aware stop path for music and loops.
 - SFX fade out over 500 ms when stopped from the now-playing panel. The stop-all command cuts immediately.

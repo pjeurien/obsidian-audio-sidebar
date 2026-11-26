@@ -590,6 +590,41 @@ body .audio-sb-codeblock-btn:focus {
   line-height: 1.5;
 }
 
+.audio-sb-scene-volumes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.audio-sb-scene-volume-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 10px;
+}
+
+.audio-sb-scene-volume-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+.audio-sb-scene-volume-value {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.audio-sb-scene-volume-row.is-disabled .audio-sb-scene-volume-slider {
+  opacity: 0.4;
+}
+
 .audio-sb-scene-actions {
   display: flex;
   gap: 8px;
